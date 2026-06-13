@@ -1,0 +1,312 @@
+"""Persistence for release bundles, entries, events, and indexes.
+
+Storage layout per project::
+
+    .releaseledger/ledgers/<ledger_ref>/
+        releases/<version>/release.md
+        releases/<version>/entries/entry-NNNN.md
+        events/events.jsonl
+        indexes/releases.json
+        indexes/entries.json
+
+All public functions take ``workspace_root`` and resolve the project paths via
+the config, mirroring the signatures in the implementation brief.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import ledgercore
+
+from releaseledger.domain.entry import (
+    ENTRY_FRONT_MATTER_KEY_ORDER,
+    ReleaseEntryRecord,
+    entry_from_dict,
+)
+from releaseledger.domain.release import (
+    RELEASE_FRONT_MATTER_KEY_ORDER,
+    ReleaseRecord,
+    release_from_dict,
+)
+from releaseledger.errors import (
+    CODE_CONFLICT,
+    CODE_NOT_FOUND,
+    CODE_USAGE_ERROR,
+    LaunchError,
+)
+from releaseledger.storage.paths import ProjectPaths, resolve_project_paths
+
+__all__ = [
+    "load_entries",
+    "load_release",
+    "list_releases",
+    "next_entry_id",
+    "rebuild_indexes",
+    "release_dir",
+    "release_markdown_path",
+    "save_entry",
+    "save_release",
+    "validate_release_version",
+]
+
+_VERSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
+
+
+def validate_release_version(version: str) -> str:
+    """Validate a release version string for safe use as a directory name.
+
+    Rejects empty values, surrounding/internal whitespace, path separators,
+    control characters, and unsupported characters. The value is used verbatim
+    as a bundle directory name, so it must never become a traversal vector.
+    """
+    if not isinstance(version, str):
+        raise LaunchError(
+            "Release version must be a string.",
+            code=CODE_USAGE_ERROR,
+            exit_code=2,
+        )
+    normalized = version.strip()
+    if not normalized:
+        raise LaunchError(
+            "Release version must not be empty.",
+            code=CODE_USAGE_ERROR,
+            exit_code=2,
+        )
+    if normalized != version or any(char.isspace() for char in normalized):
+        raise LaunchError(
+            "Release version must not contain whitespace.",
+            code=CODE_USAGE_ERROR,
+            exit_code=2,
+        )
+    if "/" in normalized or "\\" in normalized:
+        raise LaunchError(
+            "Release version must not contain path separators.",
+            code=CODE_USAGE_ERROR,
+            exit_code=2,
+        )
+    if any(ord(char) < 32 for char in normalized):
+        raise LaunchError(
+            "Release version must not contain control characters.",
+            code=CODE_USAGE_ERROR,
+            exit_code=2,
+        )
+    if _VERSION_RE.fullmatch(normalized) is None:
+        raise LaunchError(
+            f"Unsupported release version: {version!r}",
+            code=CODE_USAGE_ERROR,
+            exit_code=2,
+        )
+    return normalized
+
+
+def release_dir(paths: ProjectPaths, version: str) -> Path:
+    """Return the bundle directory for a validated version."""
+    return paths.releases_dir / validate_release_version(version)
+
+
+def release_markdown_path(paths: ProjectPaths, version: str) -> Path:
+    """Return the ``release.md`` path for a validated version."""
+    return release_dir(paths, version) / "release.md"
+
+
+def _entries_dir(paths: ProjectPaths, version: str) -> Path:
+    return release_dir(paths, version) / "entries"
+
+
+def _resolve(workspace_root: Path) -> ProjectPaths:
+    return resolve_project_paths(workspace_root)
+
+
+def ensure_release_bundle(paths: ProjectPaths, version: str) -> Path:
+    """Create the release bundle directory and entries subdirectory."""
+    bundle = release_dir(paths, version)
+    ledgercore.ensure_dir(bundle)
+    ledgercore.ensure_dir(_entries_dir(paths, version))
+    return bundle
+
+
+def save_release(
+    workspace_root: Path,
+    release: ReleaseRecord,
+    *,
+    overwrite: bool = False,
+) -> ReleaseRecord:
+    """Persist a release record as ``release.md`` (note becomes the body)."""
+    paths = _resolve(workspace_root)
+    version = validate_release_version(release.version)
+    target = release_markdown_path(paths, version)
+    if target.is_file() and not overwrite:
+        raise LaunchError(
+            f"Release version already exists: {version}",
+            code=CODE_CONFLICT,
+            exit_code=2,
+            remediation=[f"Run `releaseledger release show {version}`."],
+        )
+    ensure_release_bundle(paths, version)
+    ledgercore.write_front_matter_document(
+        target,
+        release.to_front_matter(),
+        body=release.note or "",
+        body_mode="ensure-single-final-newline",
+        key_order=RELEASE_FRONT_MATTER_KEY_ORDER,
+    )
+    return release
+
+
+def load_release(workspace_root: Path, version: str) -> ReleaseRecord:
+    """Load and validate a release record for ``version``."""
+    paths = _resolve(workspace_root)
+    safe_version = validate_release_version(version)
+    target = release_markdown_path(paths, safe_version)
+    if not target.is_file():
+        raise LaunchError(
+            f"Release not found: {version}",
+            code=CODE_NOT_FOUND,
+            exit_code=2,
+            remediation=["Run `releaseledger release list` to see releases."],
+        )
+    front_matter, body = ledgercore.read_front_matter_document(target)
+    data: dict[str, object] = dict(front_matter)
+    data["note"] = body if body else None
+    return release_from_dict(data)
+
+
+def list_releases(workspace_root: Path) -> list[ReleaseRecord]:
+    """Return all releases sorted deterministically.
+
+    Sort key: released_at, then created_at, then version.
+    """
+    paths = _resolve(workspace_root)
+    if not paths.releases_dir.is_dir():
+        return []
+    records: list[ReleaseRecord] = []
+    for child in sorted(paths.releases_dir.iterdir(), key=lambda p: p.name):
+        if not child.is_dir():
+            continue
+        target = child / "release.md"
+        if not target.is_file():
+            continue
+        try:
+            front_matter, body = ledgercore.read_front_matter_document(target)
+        except ledgercore.FrontMatterError:
+            continue
+        data: dict[str, object] = dict(front_matter)
+        data["note"] = body if body else None
+        try:
+            records.append(release_from_dict(data))
+        except LaunchError:
+            continue
+    records.sort(key=_release_sort_key)
+    return records
+
+
+def _release_sort_key(record: ReleaseRecord) -> tuple[object, ...]:
+    released_at = record.released_at or ""
+    return (released_at, record.created_at, record.version)
+
+
+def next_entry_id(workspace_root: Path, release_version: str) -> str:
+    """Return the next ``entry-NNNN`` id for a release."""
+    entries = load_entries(workspace_root, release_version)
+    existing = [entry.entry_id for entry in entries]
+    return ledgercore.next_prefixed_id("entry", existing)
+
+
+def save_entry(workspace_root: Path, entry: ReleaseEntryRecord) -> ReleaseEntryRecord:
+    """Persist an entry record as ``entry-NNNN.md`` inside its release bundle."""
+    paths = _resolve(workspace_root)
+    validate_release_version(entry.release_version)
+    bundle = release_dir(paths, entry.release_version)
+    if not bundle.is_dir():
+        raise LaunchError(
+            f"Release not found: {entry.release_version}",
+            code=CODE_NOT_FOUND,
+            exit_code=2,
+        )
+    entries_dir = _entries_dir(paths, entry.release_version)
+    ledgercore.ensure_dir(entries_dir)
+    target = entries_dir / f"{entry.entry_id}.md"
+    ledgercore.write_front_matter_document(
+        target,
+        entry.to_front_matter(),
+        body=entry.body or "",
+        body_mode="ensure-single-final-newline",
+        key_order=ENTRY_FRONT_MATTER_KEY_ORDER,
+    )
+    return entry
+
+
+def load_entries(
+    workspace_root: Path, release_version: str
+) -> list[ReleaseEntryRecord]:
+    """Return all entries for a release, sorted by order then entry_id."""
+    paths = _resolve(workspace_root)
+    safe_version = validate_release_version(release_version)
+    entries_dir = _entries_dir(paths, safe_version)
+    if not entries_dir.is_dir():
+        return []
+    records: list[ReleaseEntryRecord] = []
+    for child in sorted(entries_dir.glob("entry-*.md"), key=lambda p: p.name):
+        try:
+            front_matter, body = ledgercore.read_front_matter_document(child)
+        except ledgercore.FrontMatterError:
+            continue
+        data: dict[str, object] = dict(front_matter)
+        data["body"] = body if body else None
+        try:
+            records.append(entry_from_dict(data))
+        except LaunchError:
+            continue
+    records.sort(key=_entry_sort_key)
+    return records
+
+
+def _entry_sort_key(entry: ReleaseEntryRecord) -> tuple[object, ...]:
+    # Entries without an explicit order sort after ordered ones.
+    order: object = entry.order if entry.order is not None else float("inf")
+    return (order, entry.entry_id)
+
+
+def _release_index_row(record: ReleaseRecord) -> dict[str, object]:
+    return {
+        "version": record.version,
+        "status": record.status,
+        "title": record.title,
+        "created_at": record.created_at,
+        "released_at": record.released_at,
+        "previous_version": record.previous_version,
+        "changelog_file": record.changelog_file,
+        "entry_count": record.entry_count,
+        "artifact_count": record.artifact_count,
+    }
+
+
+def _entry_index_row(entry: ReleaseEntryRecord) -> dict[str, object]:
+    return {
+        "entry_id": entry.entry_id,
+        "release_version": entry.release_version,
+        "kind": entry.kind,
+        "summary": entry.summary,
+        "order": entry.order,
+        "internal": entry.internal,
+        "breaking": entry.breaking,
+    }
+
+
+def rebuild_indexes(workspace_root: Path) -> None:
+    """Rebuild ``releases.json`` and ``entries.json`` from on-disk records."""
+    paths = _resolve(workspace_root)
+    releases = list_releases(workspace_root)
+    release_rows = [_release_index_row(record) for record in releases]
+
+    entry_rows: list[dict[str, object]] = []
+    for record in releases:
+        for entry in load_entries(workspace_root, record.version):
+            entry_rows.append(_entry_index_row(entry))
+    entry_rows.sort(key=lambda row: (row.get("order"), row.get("entry_id")))
+
+    ledgercore.ensure_dir(paths.indexes_dir)
+    ledgercore.write_json(paths.releases_index_path, release_rows)
+    ledgercore.write_json(paths.entries_index_path, entry_rows)
