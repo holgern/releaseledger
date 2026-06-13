@@ -2,6 +2,7 @@
 # This file lives in the source project root.
 config_version = 1
 releaseledger_dir = "../ledger/release/releaseledger"
+releaseledger_dir_policy = "external"
 
 # Branch-scoped release state. This block is safe to commit.
 ledger_ref = "main"

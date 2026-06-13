@@ -531,6 +531,7 @@ def build_changelog_file(
     is set, then atomically write the merged changelog. Returns a deterministic
     ``changelog_build`` result payload.
     """
+    workspace_root = workspace_root.expanduser().resolve()
     paths = resolve_project_paths(workspace_root)
     config = _load_config(paths)
     target = _resolve_target_file(
@@ -588,8 +589,9 @@ def build_changelog_file(
 
     merged = _ensure_final_newline(merged)
     try:
+        ledgercore.ensure_dir(target.parent)
         ledgercore.atomic_write_text(target, merged)
-    except ledgercore.AtomicWriteError as exc:
+    except (ledgercore.AtomicWriteError, OSError) as exc:
         raise LaunchError(
             f"Failed to write changelog target {target}: {exc}",
             code=CODE_USAGE_ERROR,

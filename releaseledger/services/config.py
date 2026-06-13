@@ -18,6 +18,7 @@ from releaseledger.storage.config import (
 )
 from releaseledger.storage.paths import (
     ProjectLocator,
+    find_project_config,
     load_project_locator,
     resolve_project_paths,
     resolve_releaseledger_dir,
@@ -144,16 +145,18 @@ def config_set_releaseledger_dir(
     Returns a dict with before, after, and config_path for JSON mode.
     Raises LaunchError on validation failure.
     """
-    locator = load_project_locator(workspace_root)
-    root = locator.workspace_root.resolve()
-    config_path = locator.config_path
-    if not config_path.is_file():
+    start = workspace_root.expanduser().resolve()
+    if start.is_file():
+        start = start.parent
+    config_path = find_project_config(start)
+    if config_path is None:
         raise LaunchError(
             "Project not initialized: no .releaseledger.toml found.",
             code="NOT_FOUND",
             exit_code=2,
             remediation=["Run `releaseledger init` to create the config."],
         )
+    root = config_path.parent.resolve()
     config = load_project_config(config_path)
     before = config.releaseledger_dir
 

@@ -662,6 +662,20 @@ class TestPhase7Build:
         assert text.endswith("\n")
         assert text.count("## [1.2.0] - 2026-06-13") == 1
 
+    def test_build_creates_parent_for_relative_target(
+        self, tmp_path: Path
+    ) -> None:
+        self._seed(tmp_path)
+        result = _run(
+            tmp_path, "build", "1.2.0",
+            "--release-date", "2026-06-13",
+            "--target-file", "docs/CHANGELOG.md",
+        )
+        assert result.exit_code == 0, _human_error(result)
+        target = tmp_path / "docs" / "CHANGELOG.md"
+        assert target.is_file()
+        assert "## [1.2.0] - 2026-06-13" in target.read_text()
+
     def test_build_refuses_duplicate_without_replace(self, tmp_path: Path) -> None:
         self._seed(tmp_path)
         first = _run(
@@ -1132,6 +1146,29 @@ class TestPhase10ConfigCommands:
         toml = (tmp_path / ".releaseledger.toml").read_text()
         assert "external" in toml
         assert "releaseledger_dir_policy" in toml
+
+    def test_config_set_repairs_external_dir_missing_policy(
+        self, tmp_path: Path
+    ) -> None:
+        """The remediation command works even when current config is invalid."""
+        _init_project(tmp_path)
+        config_path = tmp_path / ".releaseledger.toml"
+        config_path.write_text(
+            config_path.read_text().replace(
+                'releaseledger_dir = ".releaseledger"',
+                'releaseledger_dir = "../ext-rl"',
+            )
+        )
+
+        result = _run(
+            tmp_path, "config", "set", "releaseledger_dir",
+            "../ext-rl", "--external-dir",
+        )
+
+        assert result.exit_code == 0, _human_error(result)
+        toml = config_path.read_text()
+        assert 'releaseledger_dir = "../ext-rl"' in toml
+        assert 'releaseledger_dir_policy = "external"' in toml
 
     def test_config_set_json_before_after(self, tmp_path: Path) -> None:
         """JSON mode returns before/after values."""
