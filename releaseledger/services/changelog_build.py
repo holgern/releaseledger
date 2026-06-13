@@ -24,7 +24,7 @@ from jinja2 import StrictUndefined
 from jinja2.exceptions import SecurityError, TemplateError
 from jinja2.sandbox import SandboxedEnvironment
 
-from releaseledger.domain.entry import ReleaseEntryRecord
+from releaseledger.domain.entry import ReleaseEntryRecord, normalize_entry_status
 from releaseledger.domain.release import ReleaseRecord
 from releaseledger.domain.states import ENTRY_KIND_TITLES
 from releaseledger.errors import (
@@ -33,6 +33,7 @@ from releaseledger.errors import (
     CODE_VALIDATION_ERROR,
     LaunchError,
 )
+from releaseledger.services.entry_lint import lint_release_entries
 from releaseledger.storage.config import (
     DEFAULT_CHANGELOG,
     ProjectConfig,
@@ -59,6 +60,7 @@ _GROUP_ORDER = (
     "deprecated",
     "security",
     "docs",
+    "quality",
     "internal",
 )
 
@@ -100,6 +102,10 @@ def _entry_payload(entry: ReleaseEntryRecord) -> dict[str, object]:
         "issues": list(entry.issues),
         "prs": list(entry.prs),
         "sources": list(entry.sources),
+        "status": entry.status,
+        "audience": entry.audience,
+        "scopes": list(entry.scopes),
+        "source_refs": list(entry.source_refs),
         "breaking": entry.breaking,
         "internal": entry.internal,
     }
@@ -159,6 +165,7 @@ def build_changelog_render_context(
     include_internal: bool = False,
     release_date: str | None = None,
     unreleased: bool = False,
+    include_statuses: tuple[str, ...] = ("accepted",),
 ) -> dict[str, object]:
     """Build the deterministic render context for ``version``.
 
@@ -170,7 +177,12 @@ def build_changelog_render_context(
     paths = resolve_project_paths(workspace_root)
     release = load_release(workspace_root, version)
     all_entries = load_entries(workspace_root, version)
-    entries = [e for e in all_entries if include_internal or not e.internal]
+    statuses = tuple(normalize_entry_status(value) for value in include_statuses)
+    entries = [
+        entry
+        for entry in all_entries
+        if entry.status in statuses and (include_internal or not entry.internal)
+    ]
     project_name = _project_name(paths)
     effective_date = _effective_date(
         release=release,
@@ -188,6 +200,8 @@ def build_changelog_render_context(
         "previous_version": release.previous_version,
         "changelog_file": release.changelog_file,
         "entry_count": len(entries),
+        "boundary_ref": release.boundary_ref,
+        "source_refs": list(release.source_refs),
     }
 
     releases_list: list[dict[str, object]] = []
@@ -202,12 +216,22 @@ def build_changelog_render_context(
     except Exception:  # pragma: no cover - defensive: list is best-effort
         releases_list = []
 
+    status_counts = {
+        status: sum(entry.status == status for entry in all_entries)
+        for status in ("accepted", "draft", "rejected")
+    }
+    warnings: list[str] = []
+    if "draft" in statuses and status_counts["draft"]:
+        warnings.append("Draft entries are included; output is draft-quality.")
     return {
         "project": {"name": project_name},
         "release": release_payload,
         "entries": [_entry_payload(e) for e in entries],
         "groups": _groups_payload(grouped),
         "releases": releases_list,
+        "included_statuses": list(statuses),
+        "status_counts": status_counts,
+        "warnings": warnings,
     }
 
 
@@ -284,6 +308,7 @@ def render_changelog_section(
     release_date: str | None = None,
     unreleased: bool = False,
     template_name: str = "default",
+    include_statuses: tuple[str, ...] = ("accepted",),
 ) -> dict[str, object]:
     """Render the final changelog section for ``version`` without writing files.
 
@@ -299,6 +324,7 @@ def render_changelog_section(
         include_internal=include_internal,
         release_date=release_date,
         unreleased=unreleased,
+        include_statuses=include_statuses,
     )
 
     trim_blocks = bool(config.changelog_trim)
@@ -328,6 +354,9 @@ def render_changelog_section(
     effective_date = release_payload.get("date")
 
     warnings: list[str] = []
+    context_warnings = context.get("warnings", [])
+    if isinstance(context_warnings, list):
+        warnings.extend(str(item) for item in context_warnings)
     if entry_count == 0 and not config.changelog_render_always:
         warnings.append(
             "Release has no changelog entries; rendered an empty section."
@@ -343,6 +372,8 @@ def render_changelog_section(
         "release_date": effective_date,
         "template_name": template_name,
         "warnings": warnings,
+        "included_statuses": context["included_statuses"],
+        "status_counts": context["status_counts"],
     }
 
 
@@ -523,6 +554,9 @@ def build_changelog_file(
     template_name: str = "default",
     dry_run: bool = False,
     replace_existing: bool = False,
+    include_statuses: tuple[str, ...] = ("accepted",),
+    strict: bool = False,
+    allow_empty: bool = False,
 ) -> dict[str, object]:
     """Render and optionally update the target changelog for ``version``.
 
@@ -537,6 +571,53 @@ def build_changelog_file(
     target = _resolve_target_file(
         workspace_root=workspace_root, config=config, target_file=target_file
     )
+    release = load_release(workspace_root, version)
+    statuses = tuple(normalize_entry_status(value) for value in include_statuses)
+    all_entries = load_entries(workspace_root, version)
+    selected = [
+        entry
+        for entry in all_entries
+        if entry.status in statuses and (include_internal or not entry.internal)
+    ]
+    strict_warnings: list[str] = []
+    if strict:
+        lint = lint_release_entries(
+            workspace_root,
+            release_version=version,
+            strict=False,
+            include_statuses=statuses,
+        )
+        summary = lint["summary"]
+        assert isinstance(summary, dict)
+        if int(summary["errors"]) > 0:
+            raise LaunchError(
+                "Strict build blocked by entry lint errors.",
+                code=CODE_VALIDATION_ERROR,
+                exit_code=2,
+            )
+        if not selected and not allow_empty:
+            raise LaunchError(
+                "Strict build requires at least one included entry; "
+                "pass --allow-empty to override.",
+                code=CODE_VALIDATION_ERROR,
+                exit_code=2,
+            )
+        release_refs = set(release.source_refs)
+        if release.boundary_ref:
+            release_refs.add(release.boundary_ref)
+        entry_refs = {ref for entry in selected for ref in entry.source_refs}
+        uncovered = sorted(release_refs - entry_refs)
+        if uncovered and not allow_empty:
+            raise LaunchError(
+                "Strict build has release source refs not referenced by entries: "
+                + ", ".join(uncovered),
+                code=CODE_VALIDATION_ERROR,
+                exit_code=2,
+            )
+        if int(summary["warnings"]) > 0:
+            strict_warnings.append(
+                f"Entry lint reported {summary['warnings']} warning(s)."
+            )
 
     rendered = render_changelog_section(
         workspace_root,
@@ -545,6 +626,7 @@ def build_changelog_file(
         release_date=release_date,
         unreleased=unreleased,
         template_name=template_name,
+        include_statuses=statuses,
     )
     section = str(rendered["section"])
     section_heading = rendered["section_heading"]
@@ -555,6 +637,7 @@ def build_changelog_file(
     warnings: list[str] = []
     if isinstance(raw_warnings, list):
         warnings = [str(item) for item in raw_warnings]
+    warnings.extend(strict_warnings)
     replaced_existing = False
 
     if dry_run:
@@ -569,6 +652,8 @@ def build_changelog_file(
             "section_heading": section_heading,
             "entry_count": rendered["entry_count"],
             "included_internal": bool(include_internal),
+            "included_statuses": list(statuses),
+            "status_counts": rendered["status_counts"],
             "warnings": warnings,
         }
 
@@ -608,6 +693,8 @@ def build_changelog_file(
         "section_heading": section_heading,
         "entry_count": rendered["entry_count"],
         "included_internal": bool(include_internal),
+        "included_statuses": list(statuses),
+        "status_counts": rendered["status_counts"],
         "warnings": warnings,
     }
 

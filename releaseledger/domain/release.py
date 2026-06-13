@@ -37,6 +37,9 @@ RELEASE_FRONT_MATTER_KEY_ORDER = (
     "released_at",
     "previous_version",
     "changelog_file",
+    "boundary_ref",
+    "source_refs",
+    "source_count",
     "entry_count",
     "artifact_count",
 )
@@ -54,6 +57,9 @@ class ReleaseRecord:
     previous_version: str | None = None
     note: str | None = None
     changelog_file: str | None = None
+    boundary_ref: str | None = None
+    source_refs: tuple[str, ...] = ()
+    source_count: int | None = None
     entry_count: int = 0
     artifact_count: int = 0
     file_version: str = RELEASELEDGER_FILE_VERSION
@@ -74,6 +80,9 @@ class ReleaseRecord:
             "previous_version": self.previous_version,
             "note": self.note,
             "changelog_file": self.changelog_file,
+            "boundary_ref": self.boundary_ref,
+            "source_refs": list(self.source_refs),
+            "source_count": self.source_count,
             "entry_count": self.entry_count,
             "artifact_count": self.artifact_count,
         }
@@ -109,6 +118,54 @@ def _require_int(value: object, field_name: str) -> int:
             exit_code=2,
         )
     return value
+
+
+def _require_optional_int(value: object, field_name: str) -> int | None:
+    if value is None:
+        return None
+    return _require_int(value, field_name)
+
+
+def _require_str_tuple(value: object, field_name: str) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise LaunchError(
+            f"Release field {field_name!r} must be a list.",
+            code=CODE_VALIDATION_ERROR,
+            exit_code=2,
+        )
+    refs: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise LaunchError(
+                f"Release field {field_name!r} must contain only strings.",
+                code=CODE_VALIDATION_ERROR,
+                exit_code=2,
+            )
+        try:
+            canonical = ledgercore.parse_global_ref(item).global_ref
+        except ledgercore.IdFormatError as exc:
+            raise LaunchError(
+                f"Invalid release source ref {item!r}: {exc}",
+                code=CODE_VALIDATION_ERROR,
+                exit_code=2,
+            ) from exc
+        if canonical not in refs:
+            refs.append(canonical)
+    return tuple(refs)
+
+
+def _require_optional_global_ref(value: object, field_name: str) -> str | None:
+    if value is None:
+        return None
+    raw = _require_str(value, field_name)
+    try:
+        return ledgercore.parse_global_ref(raw).global_ref
+    except ledgercore.IdFormatError as exc:
+        raise LaunchError(
+            f"Invalid release {field_name} {raw!r}: {exc}",
+            code=CODE_VALIDATION_ERROR,
+            exit_code=2,
+        ) from exc
 
 
 def release_from_dict(data: dict[str, object]) -> ReleaseRecord:
@@ -156,6 +213,11 @@ def release_from_dict(data: dict[str, object]) -> ReleaseRecord:
         changelog_file=_require_optional_str(
             data.get("changelog_file"), "changelog_file"
         ),
+        boundary_ref=_require_optional_global_ref(
+            data.get("boundary_ref"), "boundary_ref"
+        ),
+        source_refs=_require_str_tuple(data.get("source_refs", []), "source_refs"),
+        source_count=_require_optional_int(data.get("source_count"), "source_count"),
         entry_count=_require_int(data.get("entry_count", 0), "entry_count"),
         artifact_count=_require_int(data.get("artifact_count", 0), "artifact_count"),
         file_version=_require_str(

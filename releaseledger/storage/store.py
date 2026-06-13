@@ -278,6 +278,9 @@ def _release_index_row(record: ReleaseRecord) -> dict[str, object]:
         "released_at": record.released_at,
         "previous_version": record.previous_version,
         "changelog_file": record.changelog_file,
+        "boundary_ref": record.boundary_ref,
+        "source_refs": list(record.source_refs),
+        "source_count": record.source_count,
         "entry_count": record.entry_count,
         "artifact_count": record.artifact_count,
     }
@@ -291,6 +294,10 @@ def _entry_index_row(entry: ReleaseEntryRecord) -> dict[str, object]:
         "summary": entry.summary,
         "order": entry.order,
         "internal": entry.internal,
+        "status": entry.status,
+        "audience": entry.audience,
+        "scopes": list(entry.scopes),
+        "source_refs": list(entry.source_refs),
         "breaking": entry.breaking,
     }
     if entry.sources:

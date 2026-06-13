@@ -4,7 +4,9 @@ from __future__ import annotations
 
 __all__ = [
     "ENTRY_KINDS",
+    "ENTRY_KIND_ALIASES",
     "ENTRY_KIND_TITLES",
+    "ENTRY_STATUSES",
     "RELEASE_STATUSES",
     "RELEASELEDGER_FILE_VERSION",
     "RELEASELEDGER_SCHEMA_VERSION",
@@ -35,9 +37,17 @@ ENTRY_KINDS = frozenset(
         "deprecated",
         "security",
         "docs",
+        "quality",
         "internal",
     }
 )
+
+ENTRY_KIND_ALIASES = {
+    "documentation": "docs",
+    "doc": "docs",
+}
+
+ENTRY_STATUSES = frozenset({"draft", "accepted", "rejected"})
 
 # Human-readable changelog group titles keyed by entry kind.
 ENTRY_KIND_TITLES = {
@@ -48,5 +58,6 @@ ENTRY_KIND_TITLES = {
     "deprecated": "Deprecated",
     "security": "Security",
     "docs": "Documentation",
+    "quality": "Quality",
     "internal": "Internal",
 }

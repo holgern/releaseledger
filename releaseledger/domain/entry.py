@@ -12,7 +12,9 @@ from dataclasses import dataclass, field
 import ledgercore
 
 from releaseledger.domain.states import (
+    ENTRY_KIND_ALIASES,
     ENTRY_KINDS,
+    ENTRY_STATUSES,
     RELEASELEDGER_FILE_VERSION,
     RELEASELEDGER_SCHEMA_VERSION,
     SUPPORTED_SCHEMA_VERSIONS,
@@ -22,6 +24,10 @@ from releaseledger.errors import CODE_VALIDATION_ERROR, LaunchError
 __all__ = [
     "ENTRY_FRONT_MATTER_KEY_ORDER",
     "ReleaseEntryRecord",
+    "normalize_entry_kind",
+    "normalize_entry_status",
+    "normalize_scopes",
+    "validate_source_refs",
 ]
 
 ENTRY_FRONT_MATTER_KEY_ORDER = (
@@ -33,6 +39,11 @@ ENTRY_FRONT_MATTER_KEY_ORDER = (
     "kind",
     "summary",
     "created_at",
+    "updated_at",
+    "status",
+    "audience",
+    "scopes",
+    "source_refs",
     "paths",
     "issues",
     "prs",
@@ -53,6 +64,11 @@ class ReleaseEntryRecord:
     summary: str
     body: str | None = None
     created_at: str = field(default_factory=ledgercore.utc_now_iso)
+    updated_at: str | None = None
+    status: str = "accepted"
+    audience: str | None = None
+    scopes: tuple[str, ...] = ()
+    source_refs: tuple[str, ...] = ()
     paths: tuple[str, ...] = ()
     issues: tuple[str, ...] = ()
     prs: tuple[str, ...] = ()
@@ -76,6 +92,11 @@ class ReleaseEntryRecord:
             "summary": self.summary,
             "body": self.body,
             "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "status": self.status,
+            "audience": self.audience,
+            "scopes": list(self.scopes),
+            "source_refs": list(self.source_refs),
             "paths": list(self.paths),
             "issues": list(self.issues),
             "prs": list(self.prs),
@@ -149,6 +170,92 @@ def _require_optional_int(value: object, field_name: str) -> int | None:
     return value
 
 
+def normalize_entry_kind(value: str) -> str:
+    """Return the canonical persisted entry kind."""
+    if not isinstance(value, str):
+        raise LaunchError(
+            "Entry kind must be a string.",
+            code=CODE_VALIDATION_ERROR,
+            exit_code=2,
+        )
+    normalized = ENTRY_KIND_ALIASES.get(value.strip().lower(), value.strip().lower())
+    if normalized not in ENTRY_KINDS:
+        raise LaunchError(
+            f"Unsupported entry kind: {value!r}",
+            code=CODE_VALIDATION_ERROR,
+            exit_code=2,
+        )
+    return normalized
+
+
+def normalize_entry_status(value: str) -> str:
+    """Validate and normalize an entry lifecycle status."""
+    if not isinstance(value, str):
+        raise LaunchError(
+            "Entry status must be a string.",
+            code=CODE_VALIDATION_ERROR,
+            exit_code=2,
+        )
+    normalized = value.strip().lower()
+    if normalized not in ENTRY_STATUSES:
+        raise LaunchError(
+            f"Unsupported entry status: {value!r}",
+            code=CODE_VALIDATION_ERROR,
+            exit_code=2,
+        )
+    return normalized
+
+
+def normalize_scopes(values: tuple[str, ...]) -> tuple[str, ...]:
+    """Normalize scopes while preserving first-seen order."""
+    normalized: list[str] = []
+    for raw in values:
+        value = raw.strip()
+        if not value:
+            raise LaunchError(
+                "Entry scopes must not contain empty values.",
+                code=CODE_VALIDATION_ERROR,
+                exit_code=2,
+            )
+        if value not in normalized:
+            normalized.append(value)
+    return tuple(normalized)
+
+
+def validate_source_refs(values: tuple[str, ...]) -> tuple[str, ...]:
+    """Validate global refs and return their canonical spelling."""
+    validated: list[str] = []
+    for raw in values:
+        try:
+            canonical = ledgercore.parse_global_ref(raw).global_ref
+        except ledgercore.IdFormatError as exc:
+            raise LaunchError(
+                f"Invalid source ref {raw!r}: {exc}",
+                code=CODE_VALIDATION_ERROR,
+                exit_code=2,
+            ) from exc
+        if canonical not in validated:
+            validated.append(canonical)
+    return tuple(validated)
+
+
+def _validate_paths(values: tuple[str, ...]) -> tuple[str, ...]:
+    validated: list[str] = []
+    for raw in values:
+        try:
+            value = ledgercore.validate_relative_posix_path(
+                raw, field_name="paths"
+            )
+        except ledgercore.PathValidationError as exc:
+            raise LaunchError(
+                str(exc),
+                code=CODE_VALIDATION_ERROR,
+                exit_code=2,
+            ) from exc
+        validated.append(value)
+    return tuple(validated)
+
+
 def entry_from_dict(data: dict[str, object]) -> ReleaseEntryRecord:
     """Build a :class:`ReleaseEntryRecord` with strict validation."""
     if data.get("object_type") != "release_entry":
@@ -181,13 +288,7 @@ def entry_from_dict(data: dict[str, object]) -> ReleaseEntryRecord:
             code=CODE_VALIDATION_ERROR,
             exit_code=2,
         )
-    kind = data.get("kind")
-    if kind not in ENTRY_KINDS:
-        raise LaunchError(
-            f"Unsupported entry kind: {kind!r}",
-            code=CODE_VALIDATION_ERROR,
-            exit_code=2,
-        )
+    kind = normalize_entry_kind(_require_str(data.get("kind"), "kind"))
     summary = data.get("summary")
     if not isinstance(summary, str) or not summary.strip():
         raise LaunchError(
@@ -202,7 +303,18 @@ def entry_from_dict(data: dict[str, object]) -> ReleaseEntryRecord:
         summary=summary,
         body=_require_optional_str(data.get("body"), "body"),
         created_at=_require_str(data.get("created_at", ""), "created_at"),
-        paths=_require_str_tuple(data.get("paths", []), "paths"),
+        updated_at=_require_optional_str(data.get("updated_at"), "updated_at"),
+        status=normalize_entry_status(
+            _require_str(data.get("status", "accepted"), "status")
+        ),
+        audience=_require_optional_str(data.get("audience"), "audience"),
+        scopes=normalize_scopes(
+            _require_str_tuple(data.get("scopes", []), "scopes")
+        ),
+        source_refs=validate_source_refs(
+            _require_str_tuple(data.get("source_refs", []), "source_refs")
+        ),
+        paths=_validate_paths(_require_str_tuple(data.get("paths", []), "paths")),
         issues=_require_str_tuple(data.get("issues", []), "issues"),
         prs=_require_str_tuple(data.get("prs", []), "prs"),
         sources=_require_str_tuple(data.get("sources", []), "sources"),

@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from releaseledger.domain.entry import ReleaseEntryRecord
+from releaseledger.domain.entry import ReleaseEntryRecord, normalize_entry_status
 from releaseledger.domain.release import ReleaseRecord
 from releaseledger.domain.states import ENTRY_KIND_TITLES
+from releaseledger.services.entry_lint import lint_release_entries
 from releaseledger.storage.config import DEFAULT_LEDGER_NAME, load_project_config
 from releaseledger.storage.paths import ProjectPaths, resolve_project_paths
 from releaseledger.storage.store import load_entries, load_release
@@ -27,6 +28,7 @@ _GROUP_ORDER = (
     "deprecated",
     "security",
     "docs",
+    "quality",
     "internal",
 )
 
@@ -50,6 +52,10 @@ def _entry_payload(entry: ReleaseEntryRecord) -> dict[str, object]:
         "issues": list(entry.issues),
         "prs": list(entry.prs),
         "sources": list(entry.sources),
+        "status": entry.status,
+        "audience": entry.audience,
+        "scopes": list(entry.scopes),
+        "source_refs": list(entry.source_refs),
         "breaking": entry.breaking,
         "internal": entry.internal,
     }
@@ -122,6 +128,8 @@ def _render_markdown(
     target_changelog: str | None,
     release_date: str | None,
     include_sources: bool = False,
+    included_statuses: tuple[str, ...] = ("accepted",),
+    filtered_counts: dict[str, int] | None = None,
 ) -> str:
     version = release.version
     previous = release.previous_version or "none"
@@ -152,6 +160,12 @@ def _render_markdown(
     sections.append(f"- Project: {project_name}")
     sections.append(f"- Previous release: {previous}")
     sections.append(f"- Status: {status}")
+    sections.append(f"- Boundary ref: {release.boundary_ref or 'none'}")
+    sections.append(
+        "- Source refs: "
+        + (", ".join(release.source_refs) if release.source_refs else "none")
+    )
+    sections.append(f"- Included statuses: {', '.join(included_statuses)}")
     sections.append(f"- Release date: {date_text}")
     sections.append("")
     if target_changelog is not None:
@@ -160,6 +174,13 @@ def _render_markdown(
         ))
         sections.append("")
     sections.append(_render_candidate_changes(entries, include_sources=include_sources))
+    counts = filtered_counts or {}
+    hidden = [f"{name}: {count}" for name, count in counts.items() if count]
+    if hidden:
+        sections.append("")
+        sections.append("## Filtered entries")
+        sections.append("")
+        sections.extend(f"- {item} hidden" for item in hidden)
     return "\n".join(sections) + "\n"
 
 
@@ -172,15 +193,44 @@ def build_changelog_context(
     include_sources: bool = False,
     target_changelog: str | None = None,
     release_date: str | None = None,
+    include_statuses: tuple[str, ...] = ("accepted",),
+    lint: bool = False,
 ) -> str | dict[str, object]:
     """Render the changelog context for ``version`` as Markdown (str) or JSON (dict)."""
     paths = resolve_project_paths(workspace_root)
     release = load_release(workspace_root, version)
     all_entries = load_entries(workspace_root, version)
-    entries = [e for e in all_entries if include_internal or not e.internal]
+    statuses = tuple(normalize_entry_status(value) for value in include_statuses)
+    entries = [
+        entry
+        for entry in all_entries
+        if entry.status in statuses and (include_internal or not entry.internal)
+    ]
     project_name = _project_name(paths)
     effective_date = release_date or release.released_at
 
+    status_counts = {
+        status: sum(entry.status == status for entry in all_entries)
+        for status in ("accepted", "draft", "rejected")
+    }
+    filtered_counts = {
+        status: count
+        for status, count in status_counts.items()
+        if status not in statuses
+    }
+    filtered_counts["internal"] = sum(
+        entry.internal for entry in all_entries if not include_internal
+    )
+    warnings: list[object] = []
+    if lint:
+        lint_result = lint_release_entries(
+            workspace_root,
+            release_version=version,
+            include_statuses=statuses,
+        )
+        raw_issues = lint_result["issues"]
+        if isinstance(raw_issues, list):
+            warnings = list(raw_issues)
     context: dict[str, object] = {
         "kind": "release_changelog_context",
         "version": version,
@@ -191,7 +241,15 @@ def build_changelog_context(
         "entries": [_entry_payload(entry) for entry in entries],
         "target_changelog": target_changelog,
         "release_date": effective_date,
-        "warnings": [],
+        "included_statuses": list(statuses),
+        "status_counts": status_counts,
+        "filtered_counts": filtered_counts,
+        "source_refs": sorted(
+            set(release.source_refs)
+            | {ref for entry in entries for ref in entry.source_refs}
+        ),
+        "boundary_ref": release.boundary_ref,
+        "warnings": warnings,
     }
 
     if format_name == "json":
@@ -203,4 +261,6 @@ def build_changelog_context(
         target_changelog=target_changelog,
         release_date=effective_date,
         include_sources=include_sources,
+        included_statuses=statuses,
+        filtered_counts=filtered_counts,
     )

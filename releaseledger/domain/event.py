@@ -17,7 +17,11 @@ __all__ = ["ReleaseEvent"]
 EVENT_RELEASE_CREATED = "release.created"
 EVENT_RELEASE_TAGGED = "release.tagged"
 EVENT_RELEASE_FINALIZED = "release.finalized"
+EVENT_RELEASE_UPDATED = "release.updated"
 EVENT_ENTRY_ADDED = "entry.added"
+EVENT_ENTRY_UPDATED = "entry.updated"
+EVENT_ENTRY_IMPORTED = "entry.imported"
+EVENT_ENTRY_BATCH_ADDED = "entry.batch_added"
 
 
 @dataclass(slots=True, frozen=True)

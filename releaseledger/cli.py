@@ -36,15 +36,23 @@ from releaseledger.services.config import (
     storage_where,
 )
 from releaseledger.services.entries import (
+    add_many_release_entries,
     add_release_entry,
+    import_release_entry_file,
     list_release_entries,
+    load_entry_batch_file,
+    show_release_entry,
+    update_release_entry,
 )
+from releaseledger.services.entry_lint import lint_release_entries
+from releaseledger.services.entry_prompt import build_entry_prompt
 from releaseledger.services.releases import (
     create_release,
     finalize_release,
     list_release_records,
     show_release,
     tag_release,
+    update_release,
 )
 from releaseledger.storage.paths import (
     ProjectPaths,
@@ -195,6 +203,16 @@ def release_create_command(
         str | None,
         typer.Option("--released-at", help="Release date YYYY-MM-DD."),
     ] = None,
+    boundary_ref: Annotated[
+        str | None, typer.Option("--boundary-ref", help="Upper source boundary ref.")
+    ] = None,
+    source_refs: Annotated[
+        list[str] | None,
+        typer.Option("--source-ref", help="Included global source ref (repeatable)."),
+    ] = None,
+    source_count: Annotated[
+        int | None, typer.Option("--source-count", help="Number of source records.")
+    ] = None,
 ) -> None:
     """Create a new release record."""
     state = cli_state_from_context(ctx)
@@ -210,6 +228,9 @@ def release_create_command(
             previous_version=previous_version,
             changelog_file=changelog_file,
             released_at=released_at,
+            boundary_ref=boundary_ref,
+            source_refs=tuple(source_refs or ()),
+            source_count=source_count,
         )
         return result, _event_ids(result), f"created release {version}"
 
@@ -240,6 +261,16 @@ def release_tag_command(
         str | None,
         typer.Option("--released-at", help="Release date YYYY-MM-DD."),
     ] = None,
+    boundary_ref: Annotated[
+        str | None, typer.Option("--boundary-ref", help="Upper source boundary ref.")
+    ] = None,
+    source_refs: Annotated[
+        list[str] | None,
+        typer.Option("--source-ref", help="Included global source ref (repeatable)."),
+    ] = None,
+    source_count: Annotated[
+        int | None, typer.Option("--source-count", help="Number of source records.")
+    ] = None,
 ) -> None:
     """Create a release with status 'released'."""
     state = cli_state_from_context(ctx)
@@ -253,11 +284,55 @@ def release_tag_command(
             previous_version=previous_version,
             changelog_file=changelog_file,
             released_at=released_at,
+            boundary_ref=boundary_ref,
+            source_refs=tuple(source_refs or ()),
+            source_count=source_count,
         )
         return result, _event_ids(result), f"tagged release {version}"
 
     run_command(
         command="release.tag",
+        result_type="release",
+        json_output=state.json_output,
+        produce=produce,
+    )
+
+
+@release_app.command("update")
+def release_update_command(
+    ctx: typer.Context,
+    version: Annotated[str, typer.Argument(help="Release version string.")],
+    title: Annotated[str | None, typer.Option("--title")] = None,
+    status: Annotated[str | None, typer.Option("--status")] = None,
+    note: Annotated[str | None, typer.Option("--note")] = None,
+    previous_version: Annotated[str | None, typer.Option("--previous")] = None,
+    changelog_file: Annotated[str | None, typer.Option("--changelog-file")] = None,
+    boundary_ref: Annotated[str | None, typer.Option("--boundary-ref")] = None,
+    source_refs: Annotated[
+        list[str] | None, typer.Option("--source-ref")
+    ] = None,
+    source_count: Annotated[int | None, typer.Option("--source-count")] = None,
+) -> None:
+    """Update release metadata."""
+    state = cli_state_from_context(ctx)
+
+    def produce() -> CommandResult:
+        result = update_release(
+            _paths(ctx).workspace_root,
+            version=version,
+            title=title,
+            status=status,
+            note=note,
+            previous_version=previous_version,
+            changelog_file=changelog_file,
+            boundary_ref=boundary_ref,
+            source_refs=tuple(source_refs) if source_refs is not None else None,
+            source_count=source_count,
+        )
+        return result, _event_ids(result), f"updated release {version}"
+
+    run_command(
+        command="release.update",
         result_type="release",
         json_output=state.json_output,
         produce=produce,
@@ -404,9 +479,23 @@ def entry_add_command(
             "--source", help="Provenance source reference (repeatable)."
         ),
     ] = None,
+    status: Annotated[
+        str, typer.Option("--status", help="draft|accepted|rejected.")
+    ] = "accepted",
+    audience: Annotated[str | None, typer.Option("--audience")] = None,
+    scopes: Annotated[
+        list[str] | None, typer.Option("--scope", help="Entry scope (repeatable).")
+    ] = None,
+    source_refs: Annotated[
+        list[str] | None,
+        typer.Option("--source-ref", help="Global source ref (repeatable)."),
+    ] = None,
     breaking: Annotated[
         bool,
         typer.Option("--breaking", help="Mark as a breaking change."),
+    ] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Validate without writing.")
     ] = False,
     internal: Annotated[
         bool,
@@ -428,18 +517,173 @@ def entry_add_command(
             issues=tuple(issues or ()),
             prs=tuple(prs or ()),
             sources=tuple(sources or ()),
+            status=status,
+            audience=audience,
+            scopes=tuple(scopes or ()),
+            source_refs=tuple(source_refs or ()),
             breaking=breaking,
             internal=internal,
+            dry_run=dry_run,
         )
         entry_raw = result.get("entry", {})
         entry = dict(entry_raw) if isinstance(entry_raw, dict) else {}
         entry_id = str(entry.get("entry_id", ""))
-        human = f"added entry {entry_id} to release {version}"
+        human = (
+            f"previewed entry {entry_id} for release {version}"
+            if dry_run
+            else f"added entry {entry_id} to release {version}"
+        )
         return result, _event_ids(result), human
 
     run_command(
         command="entry.add",
         result_type="release_entry",
+        json_output=state.json_output,
+        produce=produce,
+    )
+
+
+@entry_app.command("show")
+def entry_show_command(
+    ctx: typer.Context,
+    version: Annotated[str, typer.Argument()],
+    entry_id: Annotated[str, typer.Argument()],
+) -> None:
+    """Show one release entry."""
+    state = cli_state_from_context(ctx)
+
+    def produce() -> CommandResult:
+        result = show_release_entry(_paths(ctx).workspace_root, version, entry_id)
+        entry = result["entry"]
+        assert isinstance(entry, dict)
+        return result, [], f"{entry_id}  {entry['kind']}  {entry['summary']}"
+
+    run_command(
+        command="entry.show",
+        result_type="release_entry",
+        json_output=state.json_output,
+        produce=produce,
+    )
+
+
+@entry_app.command("update")
+def entry_update_command(
+    ctx: typer.Context,
+    version: Annotated[str, typer.Argument()],
+    entry_id: Annotated[str, typer.Argument()],
+    kind: Annotated[str | None, typer.Option("--kind")] = None,
+    summary: Annotated[str | None, typer.Option("--summary")] = None,
+    body: Annotated[str | None, typer.Option("--body")] = None,
+    status: Annotated[str | None, typer.Option("--status")] = None,
+    audience: Annotated[str | None, typer.Option("--audience")] = None,
+    scopes: Annotated[list[str] | None, typer.Option("--scope")] = None,
+    source_refs: Annotated[list[str] | None, typer.Option("--source-ref")] = None,
+    paths: Annotated[list[str] | None, typer.Option("--path")] = None,
+    issues: Annotated[list[str] | None, typer.Option("--issue")] = None,
+    prs: Annotated[list[str] | None, typer.Option("--pr")] = None,
+    breaking: Annotated[bool | None, typer.Option("--breaking/--no-breaking")] = None,
+    internal: Annotated[bool | None, typer.Option("--internal/--no-internal")] = None,
+) -> None:
+    """Update explicitly supplied entry fields."""
+    state = cli_state_from_context(ctx)
+
+    def produce() -> CommandResult:
+        result = update_release_entry(
+            _paths(ctx).workspace_root,
+            release_version=version,
+            entry_id=entry_id,
+            kind=kind,
+            summary=summary,
+            body=body,
+            status=status,
+            audience=audience,
+            scopes=tuple(scopes) if scopes is not None else None,
+            source_refs=(
+                tuple(source_refs) if source_refs is not None else None
+            ),
+            paths=tuple(paths) if paths is not None else None,
+            issues=tuple(issues) if issues is not None else None,
+            prs=tuple(prs) if prs is not None else None,
+            breaking=breaking,
+            internal=internal,
+        )
+        return result, _event_ids(result), f"updated entry {entry_id}"
+
+    run_command(
+        command="entry.update",
+        result_type="release_entry",
+        json_output=state.json_output,
+        produce=produce,
+    )
+
+
+@entry_app.command("import")
+def entry_import_command(
+    ctx: typer.Context,
+    version: Annotated[str, typer.Argument()],
+    source_path: Annotated[Path, typer.Option("--file")],
+    replace_existing: Annotated[bool, typer.Option("--replace")] = False,
+    source_ledger: Annotated[str | None, typer.Option("--source-ledger")] = None,
+) -> None:
+    """Import a releaseledger or legacy taskledger entry document."""
+    state = cli_state_from_context(ctx)
+
+    def produce() -> CommandResult:
+        result = import_release_entry_file(
+            _paths(ctx).workspace_root,
+            release_version=version,
+            source_path=source_path,
+            replace_existing=replace_existing,
+            source_ledger=source_ledger,
+        )
+        entry = result["entry"]
+        assert isinstance(entry, dict)
+        entry_id = str(entry["entry_id"])
+        return result, _event_ids(result), f"imported entry {entry_id}"
+
+    run_command(
+        command="entry.import",
+        result_type="release_entry",
+        json_output=state.json_output,
+        produce=produce,
+    )
+
+
+@entry_app.command("add-many")
+def entry_add_many_command(
+    ctx: typer.Context,
+    version: Annotated[str, typer.Argument()],
+    source_path: Annotated[Path, typer.Option("--file")],
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+) -> None:
+    """Add a validated YAML batch atomically."""
+    state = cli_state_from_context(ctx)
+
+    def produce() -> CommandResult:
+        entries = load_entry_batch_file(source_path)
+        result = add_many_release_entries(
+            _paths(ctx).workspace_root,
+            release_version=version,
+            entries=entries,
+            dry_run=dry_run,
+        )
+        issues = result.get("issues")
+        if isinstance(issues, list) and issues:
+            raise ReleaseledgerError(
+                f"Entry batch validation failed with {len(issues)} issue(s).",
+                code="VALIDATION_ERROR",
+                exit_code=2,
+            )
+        action = "previewed" if dry_run else "added"
+        return (
+            result,
+            _event_ids(result),
+            f"{action} {len(entries)} entries for release {version}",
+        )
+
+    run_command(
+        command="entry.add-many",
+        result_type="release_entry_batch",
         json_output=state.json_output,
         produce=produce,
     )
@@ -481,6 +725,94 @@ def entry_list_command(
     )
 
 
+@entry_app.command("lint")
+def entry_lint_command(
+    ctx: typer.Context,
+    version: Annotated[str, typer.Argument()],
+    strict: Annotated[bool, typer.Option("--strict")] = False,
+    include_statuses: Annotated[
+        list[str] | None, typer.Option("--include-status")
+    ] = None,
+) -> None:
+    """Lint release entries and optionally fail on warnings."""
+    state = cli_state_from_context(ctx)
+
+    def produce() -> CommandResult:
+        result = lint_release_entries(
+            _paths(ctx).workspace_root,
+            release_version=version,
+            strict=strict,
+            include_statuses=(
+                tuple(include_statuses) if include_statuses is not None else None
+            ),
+        )
+        if not result["passed"]:
+            summary = result["summary"]
+            assert isinstance(summary, dict)
+            raise ReleaseledgerError(
+                f"Entry lint failed with {summary['errors']} error(s) and "
+                f"{summary['warnings']} warning(s).",
+                code="VALIDATION_ERROR",
+                exit_code=2,
+            )
+        summary = result["summary"]
+        assert isinstance(summary, dict)
+        human = (
+            f"entry lint passed: {summary['errors']} error(s), "
+            f"{summary['warnings']} warning(s)"
+        )
+        return result, [], human
+
+    run_command(
+        command="entry.lint",
+        result_type="entry_lint",
+        json_output=state.json_output,
+        produce=produce,
+    )
+
+
+@entry_app.command("prompt")
+def entry_prompt_command(
+    ctx: typer.Context,
+    version: Annotated[str, typer.Argument()],
+    source_refs: Annotated[list[str] | None, typer.Option("--source-ref")] = None,
+    context_file: Annotated[Path | None, typer.Option("--context-file")] = None,
+    format_name: Annotated[str, typer.Option("--format")] = "markdown",
+    output: Annotated[Path | None, typer.Option("--output")] = None,
+) -> None:
+    """Render a prompt for drafting release entries."""
+    state = cli_state_from_context(ctx)
+    try:
+        result = build_entry_prompt(
+            _paths(ctx).workspace_root,
+            release_version=version,
+            source_refs=tuple(source_refs or ()),
+            context_file=context_file,
+            format_name=format_name,
+        )
+    except ReleaseledgerError as exc:
+        emit_error(command="entry.prompt", error=exc, json_output=state.json_output)
+        raise typer.Exit(launch_error_exit_code(exc)) from exc
+    text = render_json(result) if isinstance(result, dict) else result
+    if output is not None:
+        target = write_text_output(output, text)
+        if state.json_output:
+            typer.echo(
+                render_json(
+                    {
+                        "ok": True,
+                        "command": "entry.prompt",
+                        "result_type": "entry_prompt",
+                        "result": {"output": str(target), "format": format_name},
+                    }
+                )
+            )
+        else:
+            typer.echo(f"wrote {target}")
+        return
+    typer.echo(text)
+
+
 @app.command("changelog")
 def changelog_command(
     ctx: typer.Context,
@@ -511,6 +843,10 @@ def changelog_command(
             "--include-sources", help="Show provenance sources in markdown output."
         ),
     ] = False,
+    include_statuses: Annotated[
+        list[str] | None, typer.Option("--include-status")
+    ] = None,
+    lint: Annotated[bool, typer.Option("--lint")] = False,
 ) -> None:
     """Render changelog context for a release."""
     state = cli_state_from_context(ctx)
@@ -532,6 +868,8 @@ def changelog_command(
             include_sources=include_sources,
             target_changelog=target_changelog,
             release_date=release_date,
+            include_statuses=tuple(include_statuses or ("accepted",)),
+            lint=lint,
         )
     except ReleaseledgerError as exc:
         emit_error(command="changelog", error=exc, json_output=state.json_output)
@@ -595,6 +933,11 @@ def build_command(
         str,
         typer.Option("--format", help="Output format: markdown or json."),
     ] = "markdown",
+    include_statuses: Annotated[
+        list[str] | None, typer.Option("--include-status")
+    ] = None,
+    strict: Annotated[bool, typer.Option("--strict")] = False,
+    allow_empty: Annotated[bool, typer.Option("--allow-empty")] = False,
 ) -> None:
     """Build or update CHANGELOG.md for a release."""
     state = cli_state_from_context(ctx)
@@ -618,6 +961,9 @@ def build_command(
             template_name=template,
             dry_run=dry_run,
             replace_existing=replace_existing,
+            include_statuses=tuple(include_statuses or ("accepted",)),
+            strict=strict,
+            allow_empty=allow_empty,
         )
     except ReleaseledgerError as exc:
         emit_error(command="build", error=exc, json_output=state.json_output)

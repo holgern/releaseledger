@@ -18,10 +18,14 @@ directory configured by `.releaseledger.toml`. It reuses primitives from
 
 ```bash
 releaseledger init
-releaseledger release create 1.2.0 --title "Release 1.2.0"
-releaseledger entry add 1.2.0 --kind added --summary "Add release bundle storage"
+releaseledger release create 1.2.0 --title "Release 1.2.0" \
+  --boundary-ref tl:task-0105 --source-ref tl:task-0103
+releaseledger entry add 1.2.0 --kind added \
+  --summary "Added release bundle storage" --status accepted \
+  --source-ref tl:task-0103
+releaseledger entry lint 1.2.0 --strict
 releaseledger changelog 1.2.0 --target-changelog CHANGELOG.md --release-date 2026-06-13
-releaseledger release tag 1.2.0
+releaseledger build 1.2.0 --dry-run --strict --target-file CHANGELOG.md
 ```
 
 `changelog` produces source/context for review or drafting; `build` writes the
@@ -51,31 +55,63 @@ releaseledger init [--releaseledger-dir .releaseledger] [--project-name NAME]
                   [--external-dir] [--force]
 releaseledger release create VERSION [--title TEXT] [--status planned|draft|candidate|released]
                                      [--previous VERSION] [--note TEXT] [--changelog-file PATH]
-                                     [--released-at YYYY-MM-DD]
+                                     [--released-at YYYY-MM-DD] [--boundary-ref REF]
+                                     [--source-ref REF]... [--source-count N]
+releaseledger release update VERSION [--title TEXT] [--status STATUS] [--previous VERSION]
+                                     [--note TEXT] [--changelog-file PATH]
+                                     [--boundary-ref REF] [--source-ref REF]... [--source-count N]
 releaseledger release tag VERSION [--previous VERSION] [--note TEXT] [--changelog-file PATH]
-                                  [--released-at YYYY-MM-DD]
+                                  [--released-at YYYY-MM-DD] [--boundary-ref REF]
+                                  [--source-ref REF]... [--source-count N]
 releaseledger release finalize VERSION [--released-at YYYY-MM-DD] [--changelog-file PATH]
 releaseledger release list
 releaseledger release show VERSION
 releaseledger entry add VERSION --kind KIND --summary TEXT [--body TEXT]
+                               [--status draft|accepted|rejected] [--audience TEXT]
+                               [--scope SCOPE]... [--source-ref REF]... [--dry-run]
                                [--path PATH]... [--issue REF]... [--pr REF]...
                                [--breaking] [--internal]
+releaseledger entry add-many VERSION --file FILE [--dry-run]
+releaseledger entry update VERSION ENTRY_ID [entry field options]
+releaseledger entry show VERSION ENTRY_ID
+releaseledger entry import VERSION --file FILE [--replace] [--source-ledger LEDGER]
 releaseledger entry list VERSION
+releaseledger entry lint VERSION [--strict] [--include-status STATUS]...
+releaseledger entry prompt VERSION [--source-ref REF]... [--context-file FILE]
+                                   [--format markdown|json] [--output PATH]
 releaseledger changelog VERSION [--format markdown|json] [--output PATH]
                                 [--include-internal] [--target-changelog PATH]
                                 [--release-date YYYY-MM-DD]
+                                [--include-status STATUS]... [--lint]
 releaseledger build VERSION [--target-file CHANGELOG.md] [--release-date YYYY-MM-DD]
                             [--unreleased] [--include-internal] [--dry-run]
                             [--replace-existing] [--format markdown|json]
+                            [--include-status STATUS]... [--strict] [--allow-empty]
 releaseledger storage where
 releaseledger config show
 releaseledger config set releaseledger_dir PATH [--external-dir]
-                            [--unreleased] [--include-internal] [--dry-run]
-                            [--replace-existing] [--format markdown|json]
 ```
 
 Entry kinds: `added`, `changed`, `fixed`, `removed`, `deprecated`, `security`,
-`docs`, `internal`.
+`docs`, `quality`, `internal`. `documentation` and `doc` are accepted aliases
+for canonical `docs`. Entry statuses are `draft`, `accepted`, and `rejected`;
+builds include only accepted entries by default.
+
+## Cross-ledger provenance
+
+Releaseledger remains standalone. It never imports taskledger, reads
+`.taskledger/`, or validates external task state. Link externally gathered
+evidence with canonical global refs:
+
+```bash
+taskledger task show task-0103 --json > /tmp/task-0103.json
+releaseledger entry prompt 1.2.0 --source-ref tl:task-0103 \
+  --context-file /tmp/task-0103.json --output /tmp/entry-prompt.md
+releaseledger entry add-many 1.2.0 --file /tmp/1.2.0-entries.yaml --dry-run
+releaseledger entry add-many 1.2.0 --file /tmp/1.2.0-entries.yaml
+releaseledger entry lint 1.2.0 --strict
+releaseledger build 1.2.0 --dry-run --strict --target-file CHANGELOG.md
+```
 
 Root options: `--cwd PATH` (run as if started from `PATH`; the project is
 discovered upward), `--json` (emit JSON envelopes), `--version`.
@@ -120,8 +156,14 @@ Error (machine codes: `USAGE_ERROR`, `NOT_FOUND`, `CONFIG_ERROR`,
 A narrow, stable surface is re-exported from `releaseledger.api`:
 
 ```python
-from releaseledger.api.releases import create_release, tag_release, show_release
-from releaseledger.api.entries import add_release_entry
+from releaseledger.api.releases import create_release, update_release, show_release
+from releaseledger.api.entries import (
+    add_release_entry,
+    add_many_release_entries,
+    update_release_entry,
+    lint_release_entries,
+    build_entry_prompt,
+)
 from releaseledger.api.changelog import build_changelog_file, render_changelog_section
 from releaseledger.api.config import (
     load_project_locator,
@@ -188,7 +230,6 @@ Use `config show` to inspect the validated configuration and resolved paths:
 releaseledger config show
 releaseledger --json config show
 ```
-on failure; they never print or call `typer.Exit`.
 
 ## Development
 

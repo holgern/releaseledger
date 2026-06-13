@@ -12,10 +12,13 @@ import re
 from dataclasses import replace
 from pathlib import Path
 
+import ledgercore
+
 from releaseledger.domain.event import (
     EVENT_RELEASE_CREATED,
     EVENT_RELEASE_FINALIZED,
     EVENT_RELEASE_TAGGED,
+    EVENT_RELEASE_UPDATED,
 )
 from releaseledger.domain.release import ReleaseRecord
 from releaseledger.domain.states import RELEASE_STATUSES
@@ -43,6 +46,7 @@ __all__ = [
     "list_release_records",
     "show_release",
     "tag_release",
+    "update_release",
 ]
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -69,6 +73,38 @@ def _infer_previous_version(workspace_root: Path) -> str | None:
     if not released:
         return None
     return released[-1].version
+
+
+def _validate_source_metadata(
+    *,
+    boundary_ref: str | None,
+    source_refs: tuple[str, ...],
+    source_count: int | None,
+) -> tuple[str | None, tuple[str, ...], int | None]:
+    try:
+        boundary = (
+            ledgercore.parse_global_ref(boundary_ref).global_ref
+            if boundary_ref is not None
+            else None
+        )
+        refs = tuple(
+            dict.fromkeys(
+                ledgercore.parse_global_ref(ref).global_ref for ref in source_refs
+            )
+        )
+    except ledgercore.IdFormatError as exc:
+        raise LaunchError(
+            f"Invalid release source reference: {exc}",
+            code=CODE_VALIDATION_ERROR,
+            exit_code=2,
+        ) from exc
+    if source_count is not None and source_count < 0:
+        raise LaunchError(
+            "--source-count must be zero or greater.",
+            code=CODE_VALIDATION_ERROR,
+            exit_code=2,
+        )
+    return boundary, refs, source_count
 
 
 def _release_payload(
@@ -122,6 +158,9 @@ def create_release(
     previous_version: str | None = None,
     changelog_file: str | None = None,
     released_at: str | None = None,
+    boundary_ref: str | None = None,
+    source_refs: tuple[str, ...] = (),
+    source_count: int | None = None,
 ) -> dict[str, object]:
     """Create a new release record. Fails if the version already exists."""
     validate_release_version(version)
@@ -135,6 +174,11 @@ def create_release(
         _validate_date(released_at, "--released-at")
     if previous_version is None:
         previous_version = _infer_previous_version(workspace_root)
+    boundary_ref, source_refs, source_count = _validate_source_metadata(
+        boundary_ref=boundary_ref,
+        source_refs=source_refs,
+        source_count=source_count,
+    )
     record = ReleaseRecord(
         version=version,
         status=status,
@@ -143,6 +187,9 @@ def create_release(
         previous_version=previous_version,
         note=note,
         changelog_file=changelog_file,
+        boundary_ref=boundary_ref,
+        source_refs=source_refs,
+        source_count=source_count,
     )
     return _persist_new_release(
         workspace_root, record, event_name=EVENT_RELEASE_CREATED
@@ -157,6 +204,9 @@ def tag_release(
     previous_version: str | None = None,
     changelog_file: str | None = None,
     released_at: str | None = None,
+    boundary_ref: str | None = None,
+    source_refs: tuple[str, ...] = (),
+    source_count: int | None = None,
 ) -> dict[str, object]:
     """Create a release with status 'released' (released_at defaults to today)."""
     validate_release_version(version)
@@ -166,6 +216,11 @@ def tag_release(
         released_at = _today()
     if previous_version is None:
         previous_version = _infer_previous_version(workspace_root)
+    boundary_ref, source_refs, source_count = _validate_source_metadata(
+        boundary_ref=boundary_ref,
+        source_refs=source_refs,
+        source_count=source_count,
+    )
     record = ReleaseRecord(
         version=version,
         status="released",
@@ -174,6 +229,9 @@ def tag_release(
         previous_version=previous_version,
         note=note,
         changelog_file=changelog_file,
+        boundary_ref=boundary_ref,
+        source_refs=source_refs,
+        source_count=source_count,
     )
     return _persist_new_release(workspace_root, record, event_name=EVENT_RELEASE_TAGGED)
 
@@ -216,6 +274,92 @@ def finalize_release(
     return _release_payload(workspace_root, updated, event.event_id)
 
 
+def update_release(
+    workspace_root: Path,
+    *,
+    version: str,
+    title: str | None = None,
+    status: str | None = None,
+    note: str | None = None,
+    previous_version: str | None = None,
+    changelog_file: str | None = None,
+    boundary_ref: str | None = None,
+    source_refs: tuple[str, ...] | None = None,
+    source_count: int | None = None,
+) -> dict[str, object]:
+    """Update explicitly supplied release metadata."""
+    existing = load_release(workspace_root, version)
+    if status is not None and status not in RELEASE_STATUSES:
+        raise LaunchError(
+            f"Unsupported release status: {status!r}",
+            code=CODE_VALIDATION_ERROR,
+            exit_code=2,
+        )
+    boundary, refs, count = _validate_source_metadata(
+        boundary_ref=(
+            boundary_ref if boundary_ref is not None else existing.boundary_ref
+        ),
+        source_refs=source_refs if source_refs is not None else existing.source_refs,
+        source_count=(
+            source_count if source_count is not None else existing.source_count
+        ),
+    )
+    values: dict[str, object] = {
+        "title": title if title is not None else existing.title,
+        "status": status if status is not None else existing.status,
+        "note": note if note is not None else existing.note,
+        "previous_version": (
+            previous_version
+            if previous_version is not None
+            else existing.previous_version
+        ),
+        "changelog_file": (
+            changelog_file if changelog_file is not None else existing.changelog_file
+        ),
+        "boundary_ref": boundary,
+        "source_refs": refs,
+        "source_count": count,
+    }
+    if all(getattr(existing, key) == value for key, value in values.items()):
+        raise LaunchError(
+            "Release update did not change any fields.",
+            code=CODE_CONFLICT,
+            exit_code=2,
+        )
+    updated = replace(
+        existing,
+        title=title if title is not None else existing.title,
+        status=status if status is not None else existing.status,
+        note=note if note is not None else existing.note,
+        previous_version=(
+            previous_version
+            if previous_version is not None
+            else existing.previous_version
+        ),
+        changelog_file=(
+            changelog_file if changelog_file is not None else existing.changelog_file
+        ),
+        boundary_ref=boundary,
+        source_refs=refs,
+        source_count=count,
+    )
+    save_release(workspace_root, updated, overwrite=True)
+    event = append_event(
+        workspace_root,
+        event=EVENT_RELEASE_UPDATED,
+        release_version=version,
+        data={
+            "fields": sorted(
+                key
+                for key, value in values.items()
+                if getattr(existing, key) != value
+            )
+        },
+    )
+    rebuild_indexes(workspace_root)
+    return _release_payload(workspace_root, updated, event.event_id)
+
+
 def list_release_records(workspace_root: Path) -> list[dict[str, object]]:
     """Return release dicts sorted deterministically."""
     return [record.to_dict() for record in list_releases(workspace_root)]
@@ -229,4 +373,3 @@ def show_release(workspace_root: Path, version: str) -> dict[str, object]:
     payload["entries"] = entries
     payload["entry_count"] = len(entries)
     return payload
-
