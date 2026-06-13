@@ -47,7 +47,8 @@ After `init` you get a `.releaseledger.toml` and a `.releaseledger/` layout:
 ## Commands
 
 ```text
-releaseledger init [--releaseledger-dir .releaseledger] [--project-name NAME] [--force]
+releaseledger init [--releaseledger-dir .releaseledger] [--project-name NAME]
+                  [--external-dir] [--force]
 releaseledger release create VERSION [--title TEXT] [--status planned|draft|candidate|released]
                                      [--previous VERSION] [--note TEXT] [--changelog-file PATH]
                                      [--released-at YYYY-MM-DD]
@@ -64,6 +65,11 @@ releaseledger changelog VERSION [--format markdown|json] [--output PATH]
                                 [--include-internal] [--target-changelog PATH]
                                 [--release-date YYYY-MM-DD]
 releaseledger build VERSION [--target-file CHANGELOG.md] [--release-date YYYY-MM-DD]
+                            [--unreleased] [--include-internal] [--dry-run]
+                            [--replace-existing] [--format markdown|json]
+releaseledger storage where
+releaseledger config show
+releaseledger config set releaseledger_dir PATH [--external-dir]
                             [--unreleased] [--include-internal] [--dry-run]
                             [--replace-existing] [--format markdown|json]
 ```
@@ -117,10 +123,71 @@ A narrow, stable surface is re-exported from `releaseledger.api`:
 from releaseledger.api.releases import create_release, tag_release, show_release
 from releaseledger.api.entries import add_release_entry
 from releaseledger.api.changelog import build_changelog_file, render_changelog_section
-from releaseledger.api.config import load_project_locator, render_default_releaseledger_toml
+from releaseledger.api.config import (
+    load_project_locator,
+    render_default_releaseledger_toml,
+    storage_where,
+    config_show,
+    config_set_releaseledger_dir,
+)
 ```
 
 Services return plain dict payloads and raise `releaseledger.errors.LaunchError`
+on failure; they never print or call `typer.Exit`.
+
+## External state configuration
+
+By default, releaseledger stores state in a `.releaseledger/` directory inside
+the workspace. Projects that use a consolidated sibling state repository can
+configure an external directory with a portable relative path:
+
+```toml
+# .releaseledger.toml
+releaseledger_dir = "../ledger/release/releaseledger"
+releaseledger_dir_policy = "external"
+```
+
+To set this via the CLI:
+
+```bash
+releaseledger init --releaseledger-dir ../ledger/release/releaseledger --external-dir
+# or for an existing project:
+releaseledger config set releaseledger_dir ../ledger/release/releaseledger --external-dir
+```
+
+Relative paths that escape the workspace root are rejected unless
+`releaseledger_dir_policy` is set to `"external"` or `--external-dir` is passed.
+Absolute paths are accepted for backward compatibility but are not portable.
+
+## Storage diagnostics
+
+Use `storage where` to inspect the effective storage location, layout health,
+and config source without mutating state:
+
+```bash
+releaseledger storage where
+releaseledger --json storage where
+```
+
+Human output example:
+
+```text
+Workspace: /home/user/project
+Config: /home/user/project/.releaseledger.toml
+Storage: /home/user/project/.releaseledger
+Ledger: main
+Inside workspace: yes
+Source: dotfile
+Layout: ok
+Indexes: ok
+```
+
+Use `config show` to inspect the validated configuration and resolved paths:
+
+```bash
+releaseledger config show
+releaseledger --json config show
+```
 on failure; they never print or call `typer.Exit`.
 
 ## Development

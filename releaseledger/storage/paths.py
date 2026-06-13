@@ -30,6 +30,7 @@ from releaseledger.errors import CODE_CONFLICT, CODE_USAGE_ERROR, LaunchError
 from releaseledger.storage.config import (
     CONFIG_VERSION,
     DEFAULT_LEDGER_NAME,
+    DEFAULT_RELEASELEDGER_DIR_POLICY,
     ProjectConfig,
     load_project_config,
     render_default_releaseledger_toml,
@@ -110,11 +111,17 @@ def discover_workspace_root(start: Path) -> Path:
     return resolved.parent if resolved.is_file() else resolved
 
 
-def resolve_releaseledger_dir(workspace_root: Path, value: str) -> Path:
+def resolve_releaseledger_dir(
+    workspace_root: Path,
+    value: str,
+    *,
+    policy: str = "workspace",
+) -> Path:
     """Resolve a ``releaseledger_dir`` value against the workspace root.
 
-    Relative values must stay under the workspace root (no traversal escape).
-    Absolute values are allowed as explicit overrides and normalized.
+    Relative values must stay under the workspace root unless ``policy`` is
+    ``"external"``.  Absolute values are allowed as explicit overrides and
+    normalized.
     """
     if not isinstance(value, str) or not value.strip():
         raise LaunchError(
@@ -127,13 +134,29 @@ def resolve_releaseledger_dir(workspace_root: Path, value: str) -> Path:
     if candidate.is_absolute():
         return candidate.resolve()
     resolved = (root / value).resolve()
+    if policy == "external":
+        return resolved
     try:
         resolved.relative_to(root)
     except ValueError:
+        resolved_str = str(resolved)
         raise LaunchError(
             f"releaseledger_dir escapes the workspace root: {value!r}",
             code=CODE_USAGE_ERROR,
             exit_code=2,
+            data={
+                "workspace_root": str(root),
+                "value": value,
+                "resolved_path": resolved_str,
+                "policy": policy,
+            },
+            remediation=[
+                "Use releaseledger_dir = \".releaseledger\", or",
+                "Set releaseledger_dir_policy = 'external'"
+                " for intentional sibling storage, or",
+                f"Run `releaseledger config set"
+                f" releaseledger_dir {value} --external-dir`.",
+            ],
         ) from None
     return resolved
 
@@ -165,7 +188,8 @@ def load_project_locator(
         else:
             config = load_project_config(config_path)
             releaseledger_dir = resolve_releaseledger_dir(
-                workspace_root, config.releaseledger_dir
+                workspace_root, config.releaseledger_dir,
+                policy=config.releaseledger_dir_policy,
             )
             source = (
                 "dotfile"
@@ -203,7 +227,8 @@ def resolve_project_paths(workspace_root: Path) -> ProjectPaths:
     config_path = workspace_root / CANONICAL_PROJECT_CONFIG_FILENAME
     config: ProjectConfig = load_project_config(config_path)
     releaseledger_dir = resolve_releaseledger_dir(
-        workspace_root, config.releaseledger_dir
+        workspace_root, config.releaseledger_dir,
+        policy=config.releaseledger_dir_policy,
     )
     ledger_dir = releaseledger_dir / "ledgers" / config.ledger_ref
     releases_dir = ledger_dir / "releases"
@@ -261,6 +286,7 @@ def initialize_project(
     releaseledger_dir: str | None = None,
     project_name: str | None = None,
     force: bool = False,
+    external_dir: bool = False,
 ) -> dict[str, object]:
     """Create ``.releaseledger.toml`` and the default state layout.
 
@@ -278,12 +304,31 @@ def initialize_project(
         )
 
     dir_value = releaseledger_dir or DEFAULT_RELEASELEDGER_DIR_NAME
-    # Validate the chosen value before writing so init fails fast.
-    resolve_releaseledger_dir(workspace_root, dir_value)
+    # Determine the policy to use: "external" when the caller explicitly opts
+    # in and the path escapes the workspace root.
+    policy = DEFAULT_RELEASELEDGER_DIR_POLICY
+    if external_dir:
+        # Validate that the path actually escapes; if it does, set the policy.
+        candidate = Path(dir_value)
+        if not candidate.is_absolute():
+            resolved = (workspace_root / dir_value).resolve()
+            root = workspace_root.resolve()
+            try:
+                resolved.relative_to(root)
+            except ValueError:
+                policy = "external"
+            # else: the path is inside the workspace; external_dir is unnecessary
+            # but harmless; just use the default policy.
+        # absolute paths are accepted regardless; keep the default policy.
+
+    # Validate the chosen value with the determined policy before writing.
+    resolve_releaseledger_dir(workspace_root, dir_value, policy=policy)
+
 
     toml_text = render_default_releaseledger_toml(
         releaseledger_dir=dir_value,
         project_name=project_name or DEFAULT_LEDGER_NAME,
+        policy=policy,
     )
     ledgercore.atomic_write_text(config_path, toml_text)
     paths = ensure_layout(workspace_root)

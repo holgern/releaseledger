@@ -7,6 +7,7 @@ brief's test plan. JSON helpers parse the deterministic success/error envelopes.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -31,8 +32,17 @@ def _init_project(tmp_path: Path) -> None:
 
 
 def _human_error(result) -> str:
-    """Return the stderr/stdout text for a non-zero human-mode result."""
-    return (result.stderr or "") + (result.stdout or "")
+    """Return the stderr/stdout text for a non-zero human-mode result.
+
+    Some Click/Typer combinations raise ``ValueError`` when ``stderr`` was
+    not captured separately; tolerate that and fall back to stdout/output.
+    """
+    try:
+        stderr = result.stderr or ""
+    except ValueError:
+        stderr = ""
+    stdout = result.stdout or getattr(result, "output", "") or ""
+    return stderr + stdout
 
 
 def _run(tmp_path: Path, *cmd: str):
@@ -881,3 +891,368 @@ class TestPhase6EventsIndexes:
         assert len(events) == 1
         assert events[0].event == "release.tagged"
         assert events[0].event_id == "event-0001"
+
+
+# ---------------------------------------------------------------------------
+# Phase 8: storage diagnostics
+# ---------------------------------------------------------------------------
+
+
+class TestPhase8StorageWhere:
+    def test_storage_where_reports_default_layout(self, tmp_path: Path) -> None:
+        _init_project(tmp_path)
+        result = _run(tmp_path, "storage", "where")
+        assert result.exit_code == 0, result.stdout
+        assert "Workspace:" in result.stdout
+        assert "Config:" in result.stdout
+        assert "Storage:" in result.stdout
+        assert "Ledger: main" in result.stdout
+        assert "Inside workspace: yes" in result.stdout
+        assert "Source: dotfile" in result.stdout
+        assert "Layout: ok" in result.stdout
+        assert "Indexes: ok" in result.stdout
+
+    def test_storage_where_json_mode(self, tmp_path: Path) -> None:
+        _init_project(tmp_path)
+        payload = _json(_jrun(tmp_path, "storage", "where"))
+        assert payload["ok"] is True
+        assert payload["command"] == "storage.where"
+        assert payload["result_type"] == "storage_location"
+        r = payload["result"]
+        assert r["kind"] == "storage_location"
+        assert str(tmp_path.resolve()) in str(r["workspace_root"])
+        assert r["ledger_ref"] == "main"
+        assert r["inside_workspace"] is True
+        assert r["source"] == "dotfile"
+        assert r["layout_exists"] is True
+        assert r["indexes_exist"] is True
+
+    def test_storage_where_from_subdirectory(self, tmp_path: Path) -> None:
+        _init_project(tmp_path)
+        subdir = tmp_path / "src" / "deep"
+        subdir.mkdir(parents=True)
+        payload = _json(_jrun(tmp_path, "--cwd", str(subdir), "storage", "where"))
+        r = payload["result"]
+        assert str(tmp_path.resolve()) in str(r["workspace_root"])
+        assert r["inside_workspace"] is True
+        assert r["layout_exists"] is True
+
+    def test_storage_where_read_only(self, tmp_path: Path) -> None:
+        """storage where must not mutate .releaseledger or .releaseledger.toml."""
+        _init_project(tmp_path)
+        toml_before = (tmp_path / ".releaseledger.toml").read_text()
+        layout_before = set(p.name for p in (tmp_path / ".releaseledger").rglob("*"))
+        _run(tmp_path, "storage", "where")
+        assert (tmp_path / ".releaseledger.toml").read_text() == toml_before
+        layout_after = set(p.name for p in (tmp_path / ".releaseledger").rglob("*"))
+        assert layout_after == layout_before
+
+    def test_storage_where_uninitialized(self, tmp_path: Path) -> None:
+        """Without a config, storage where still succeeds with defaults."""
+        result = _run(tmp_path, "storage", "where")
+        assert result.exit_code == 0, result.stdout
+        assert "Source: default" in result.stdout
+        assert "Layout: missing" in result.stdout
+
+    def test_storage_where_with_custom_releaseledger_dir(self, tmp_path: Path) -> None:
+        result = runner.invoke(
+            app,
+            ["--cwd", str(tmp_path), "init", "--releaseledger-dir", ".custom-rl"],
+        )
+        assert result.exit_code == 0, result.stdout
+        payload = _json(_jrun(tmp_path, "storage", "where"))
+        r = payload["result"]
+        assert "custom-rl" in str(r["releaseledger_dir"])
+        assert r["inside_workspace"] is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 9: external state policy
+# ---------------------------------------------------------------------------
+
+
+class TestPhase9ExternalPolicy:
+    def test_external_relative_dir_rejected_by_default(self, tmp_path: Path) -> None:
+        """A relative releaseledger_dir that escapes the workspace must be rejected."""
+        result = runner.invoke(
+            app,
+            ["--cwd", str(tmp_path), "init", "--releaseledger-dir", "../escape"],
+        )
+        assert result.exit_code != 0
+        assert "escapes" in _human_error(result)
+
+    def test_external_relative_dir_rejected_without_flag(self, tmp_path: Path) -> None:
+        """init with an external relative dir and no --external-dir must fail fast."""
+        result = runner.invoke(
+            app,
+            ["--cwd", str(tmp_path), "init", "--releaseledger-dir", "../out"],
+        )
+        assert result.exit_code != 0
+        assert "escapes" in _human_error(result)
+        # TOML should not have been written because init failed.
+        assert not (tmp_path / ".releaseledger.toml").is_file()
+
+    def test_external_relative_dir_allowed_with_flag(self, tmp_path: Path) -> None:
+        """--external-dir permits a relative path that escapes the workspace."""
+        target = tmp_path.parent / "ext-rl"
+        rel = os.path.relpath(target, tmp_path)
+        result = runner.invoke(
+            app,
+            ["--cwd", str(tmp_path), "init",
+             "--releaseledger-dir", rel, "--external-dir"],
+        )
+        assert result.exit_code == 0, result.stdout
+        toml = (tmp_path / ".releaseledger.toml").read_text()
+        assert "releaseledger_dir_policy" in toml
+        assert "external" in toml
+        # Verify the relative path was written (not the absolute path).
+        assert f'releaseledger_dir = "{rel}"' in toml
+
+    def test_external_dir_json_error_has_remediation(self, tmp_path: Path) -> None:
+        """JSON error when external dir is rejected includes remediation hints."""
+        result = runner.invoke(
+            app,
+            ["--cwd", str(tmp_path), "--json", "init",
+             "--releaseledger-dir", "../escape"],
+        )
+        payload = json.loads(result.stdout)
+        assert payload["ok"] is False
+        err = payload["error"]
+        assert err["code"] == "USAGE_ERROR"
+        assert "escapes" in err["message"]
+        assert "remediation" in err
+        # At least one remediation hint must mention the external-dir option.
+        assert any("external" in r.lower() for r in err["remediation"])
+
+    def test_external_dir_error_has_data_fields(self, tmp_path: Path) -> None:
+        """JSON error includes structured data with workspace,
+        value, resolved_path, and policy."""
+        result = runner.invoke(
+            app,
+            ["--cwd", str(tmp_path), "--json", "init",
+             "--releaseledger-dir", "../escape"],
+        )
+        payload = json.loads(result.stdout)
+        err = payload["error"]
+        assert "data" in err
+        data = err["data"]
+        assert "workspace_root" in data
+        assert "value" in data
+        assert "resolved_path" in data
+        assert "policy" in data
+        assert data["policy"] == "workspace"
+        assert data["value"] == "../escape"
+
+    def test_workspace_dir_still_works(self, tmp_path: Path) -> None:
+        """Existing workspace-local behavior is unchanged."""
+        _init_project(tmp_path)
+        payload = _json(_jrun(tmp_path, "storage", "where"))
+        assert payload["result"]["inside_workspace"] is True
+        assert payload["result"]["layout_exists"] is True
+
+    def test_unknown_policy_rejected(self, tmp_path: Path) -> None:
+        """A releaseledger_dir_policy other than
+        workspace/external is rejected."""
+        (tmp_path / ".releaseledger.toml").write_text(
+            'releaseledger_dir = ".releaseledger"\nreleaseledger_dir_policy = "bogus"\n'
+        )
+        with pytest.raises(Exception) as exc_info:
+            from releaseledger.storage.paths import require_project
+            require_project(tmp_path)
+        msg = str(exc_info.value)
+        assert "releaseledger_dir_policy" in msg or "workspace" in msg
+
+
+
+
+# ---------------------------------------------------------------------------
+# Phase 10: config management
+# ---------------------------------------------------------------------------
+
+
+class TestPhase10ConfigCommands:
+    def test_config_show_default(self, tmp_path: Path) -> None:
+        """config show reports workspace, config path, storage, policy, ledger ref."""
+        _init_project(tmp_path)
+        result = _run(tmp_path, "config", "show")
+        assert result.exit_code == 0, result.stdout
+        assert "Workspace:" in result.stdout
+        assert "Config:" in result.stdout
+        assert "Storage:" in result.stdout
+        assert "Policy: workspace" in result.stdout
+        assert "Ledger ref: main" in result.stdout
+
+    def test_config_show_json_mode(self, tmp_path: Path) -> None:
+        _init_project(tmp_path)
+        payload = _json(_jrun(tmp_path, "config", "show"))
+        assert payload["ok"] is True
+        assert payload["command"] == "config.show"
+        r = payload["result"]
+        assert r["kind"] == "config_show"
+        assert r["config"]["releaseledger_dir"] == ".releaseledger"
+        assert r["config"]["releaseledger_dir_policy"] == "workspace"
+        assert r["config"]["ledger_ref"] == "main"
+
+    def test_config_set_rejects_uninitialized(self, tmp_path: Path) -> None:
+        """config set without init raises NOT_FOUND."""
+        result = _run(
+            tmp_path, "config", "set", "releaseledger_dir", ".custom"
+        )
+        assert result.exit_code != 0
+        assert "not initialized" in _human_error(result).lower()
+
+    def test_config_set_rejects_external_without_flag(self, tmp_path: Path) -> None:
+        """config set with external relative dir requires --external-dir."""
+        _init_project(tmp_path)
+        result = _run(
+            tmp_path, "config", "set", "releaseledger_dir", "../escape"
+        )
+        assert result.exit_code != 0
+        assert "escapes" in _human_error(result)
+
+    def test_config_set_workspace_local_dir(self, tmp_path: Path) -> None:
+        """config set to a workspace-local dir succeeds and rewrites TOML."""
+        _init_project(tmp_path)
+        result = _run(
+            tmp_path, "config", "set", "releaseledger_dir", ".custom-rl"
+        )
+        assert result.exit_code == 0, result.stdout
+        toml = (tmp_path / ".releaseledger.toml").read_text()
+        assert '.custom-rl' in toml
+        assert 'releaseledger_dir = ".custom-rl"' in toml
+
+    def test_config_set_external_dir_with_flag(self, tmp_path: Path) -> None:
+        """config set --external-dir with an external relative dir writes the policy."""
+        _init_project(tmp_path)
+        result = _run(
+            tmp_path, "config", "set", "releaseledger_dir",
+            "../ext-rl", "--external-dir",
+        )
+        assert result.exit_code == 0, result.stdout
+        toml = (tmp_path / ".releaseledger.toml").read_text()
+        assert "external" in toml
+        assert "releaseledger_dir_policy" in toml
+
+    def test_config_set_json_before_after(self, tmp_path: Path) -> None:
+        """JSON mode returns before/after values."""
+        _init_project(tmp_path)
+        payload = _json(
+            _jrun(
+                tmp_path, "config", "set",
+                "releaseledger_dir", ".custom-rl",
+            )
+        )
+        assert payload["ok"] is True
+        r = payload["result"]
+        assert r["before"] == ".releaseledger"
+        assert r["after"] == ".custom-rl"
+        assert r["key"] == "releaseledger_dir"
+
+    def test_config_set_rejects_unknown_key(self, tmp_path: Path) -> None:
+        """Only releaseledger_dir is supported; other keys are rejected."""
+        _init_project(tmp_path)
+        result = _run(
+            tmp_path, "config", "set", "bogus_key", "value"
+        )
+        assert result.exit_code != 0
+        assert "unsupported" in _human_error(result).lower()
+
+    def test_config_set_atomicity(self, tmp_path: Path) -> None:
+        """config set rewrites TOML atomically (all other config preserved)."""
+        _init_project(tmp_path)
+        _run(tmp_path, "config", "set", "releaseledger_dir", ".custom-rl")
+        toml_after = (tmp_path / ".releaseledger.toml").read_text()
+        # The releaseledger_dir line changed.
+        assert '.custom-rl' in toml_after
+        # Other config preserved.
+        assert 'config_version = 1' in toml_after
+        assert '[ledger]' in toml_after
+        assert '[release]' in toml_after
+        assert '[changelog]' in toml_after
+
+
+# ---------------------------------------------------------------------------
+# Phase 11: entry provenance
+# ---------------------------------------------------------------------------
+
+
+class TestPhase11EntrySources:
+    def test_entry_add_single_source(self, tmp_path: Path) -> None:
+        """--source VALUE is stored in the entry front matter."""
+        _init_project(tmp_path)
+        _run(tmp_path, "release", "create", "1.0.0")
+        result = _run(
+            tmp_path, "entry", "add", "1.0.0",
+            "--kind", "added", "--summary", "Add X",
+            "--source", "taskledger:task-0001",
+        )
+        assert result.exit_code == 0, result.stdout
+        import ledgercore
+        entry_path = (
+            tmp_path / ".releaseledger" / "ledgers" / "main"
+            / "releases" / "1.0.0" / "entries" / "entry-0001.md"
+        )
+        meta, _ = ledgercore.read_front_matter_document(entry_path)
+        assert "sources" in meta
+        assert meta["sources"] == ["taskledger:task-0001"]
+
+    def test_entry_add_multiple_sources(self, tmp_path: Path) -> None:
+        """--source is repeatable for multiple provenance refs."""
+        _init_project(tmp_path)
+        _run(tmp_path, "release", "create", "1.0.0")
+        result = _run(
+            tmp_path, "entry", "add", "1.0.0",
+            "--kind", "added", "--summary", "Add X",
+            "--source", "taskledger:task-0001",
+            "--source", "github:pr-42",
+        )
+        assert result.exit_code == 0, result.stdout
+        import ledgercore
+        entry_path = (
+            tmp_path / ".releaseledger" / "ledgers" / "main"
+            / "releases" / "1.0.0" / "entries" / "entry-0001.md"
+        )
+        meta, _ = ledgercore.read_front_matter_document(entry_path)
+        assert meta["sources"] == ["taskledger:task-0001", "github:pr-42"]
+
+    def test_entry_sources_in_json_payload(self, tmp_path: Path) -> None:
+        """Changelog JSON includes sources for entries that have them."""
+        _init_project(tmp_path)
+        _run(tmp_path, "release", "create", "1.0.0")
+        _run(
+            tmp_path, "entry", "add", "1.0.0",
+            "--kind", "added", "--summary", "Add X",
+            "--source", "taskledger:task-0001",
+        )
+        result = _run(tmp_path, "changelog", "1.0.0", "--format", "json")
+        payload = json.loads(result.stdout)
+        entries = payload["entries"]
+        assert len(entries) == 1
+        assert entries[0]["sources"] == ["taskledger:task-0001"]
+
+    def test_entry_without_sources_still_loads(self, tmp_path: Path) -> None:
+        """Existing entries without sources field load unchanged."""
+        _init_project(tmp_path)
+        _run(tmp_path, "release", "create", "1.0.0")
+        _run(
+            tmp_path, "entry", "add", "1.0.0",
+            "--kind", "added", "--summary", "Legacy entry",
+        )
+        # Verify sources is empty in the payload.
+        result = _run(tmp_path, "changelog", "1.0.0", "--format", "json")
+        payload = json.loads(result.stdout)
+        entries = payload["entries"]
+        assert entries[0]["sources"] == []
+
+    def test_entry_list_json_includes_sources(self, tmp_path: Path) -> None:
+        """entry list JSON includes sources for entries with them."""
+        _init_project(tmp_path)
+        _run(tmp_path, "release", "create", "1.0.0")
+        _run(
+            tmp_path, "entry", "add", "1.0.0",
+            "--kind", "added", "--summary", "With source",
+            "--source", "taskledger:task-0001",
+        )
+        payload = _json(_jrun(tmp_path, "entry", "list", "1.0.0"))
+        entries = payload["result"]["entries"]
+        assert entries[0]["sources"] == ["taskledger:task-0001"]

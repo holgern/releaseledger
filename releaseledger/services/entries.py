@@ -55,6 +55,7 @@ def add_release_entry(
     paths: tuple[str, ...] = (),
     issues: tuple[str, ...] = (),
     prs: tuple[str, ...] = (),
+    sources: tuple[str, ...] = (),
     breaking: bool = False,
     internal: bool = False,
 ) -> dict[str, object]:
@@ -86,6 +87,7 @@ def add_release_entry(
         paths=safe_paths,
         issues=tuple(issues),
         prs=tuple(prs),
+        sources=tuple(sources),
         breaking=breaking,
         internal=internal,
         order=order,

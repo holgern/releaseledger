@@ -36,6 +36,7 @@ ENTRY_FRONT_MATTER_KEY_ORDER = (
     "paths",
     "issues",
     "prs",
+    "sources",
     "breaking",
     "internal",
     "order",
@@ -55,6 +56,7 @@ class ReleaseEntryRecord:
     paths: tuple[str, ...] = ()
     issues: tuple[str, ...] = ()
     prs: tuple[str, ...] = ()
+    sources: tuple[str, ...] = ()
     breaking: bool = False
     internal: bool = False
     order: int | None = None
@@ -77,6 +79,7 @@ class ReleaseEntryRecord:
             "paths": list(self.paths),
             "issues": list(self.issues),
             "prs": list(self.prs),
+            "sources": list(self.sources),
             "breaking": self.breaking,
             "internal": self.internal,
             "order": self.order,
@@ -202,6 +205,7 @@ def entry_from_dict(data: dict[str, object]) -> ReleaseEntryRecord:
         paths=_require_str_tuple(data.get("paths", []), "paths"),
         issues=_require_str_tuple(data.get("issues", []), "issues"),
         prs=_require_str_tuple(data.get("prs", []), "prs"),
+        sources=_require_str_tuple(data.get("sources", []), "sources"),
         breaking=_require_bool(data.get("breaking", False), "breaking"),
         internal=_require_bool(data.get("internal", False), "internal"),
         order=_require_optional_int(data.get("order"), "order"),

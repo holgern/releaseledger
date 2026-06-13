@@ -5,7 +5,17 @@ dedupe = true
 respect_gitignore = true
 # exclude = ["*/.venv/*", "integration_tests", "examples", "docs"]
 gitignore_allow = ["releaseledger/_version.py"]
-exclude = ["*/.venv/*", "integration_tests", "todo.md"]
+exclude = [
+  "*/.venv/*",
+  "integration_tests",
+  "todo.md",
+  "run.html",
+  "pi-session-*.html",
+  "*-session-*.html",
+  ".pytest_cache/*",
+  ".ruff_cache/*",
+  ".mypy_cache/*",
+]
 include = ["**/*.py", "**/*.toml", "**/*.rst", "**/*.md", "**/*.typed", "**/*.js", "**/*.css", "**/*.html", "**/*.conf"]
 split_max_chars = 0
 manifest = false

@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from releaseledger.services.config import (
+    config_set_releaseledger_dir,
+    config_show,
+    storage_where,
+)
 from releaseledger.storage.config import (
     ProjectConfig,
     load_project_config,
@@ -15,9 +20,12 @@ from releaseledger.storage.paths import (
 
 __all__ = [
     "ProjectConfig",
+    "config_set_releaseledger_dir",
+    "config_show",
     "discover_workspace_root",
     "load_project_config",
     "load_project_locator",
     "render_default_releaseledger_toml",
     "require_project",
+    "storage_where",
 ]

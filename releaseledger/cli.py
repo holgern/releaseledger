@@ -30,6 +30,11 @@ from releaseledger.cli_common import (
 from releaseledger.errors import ReleaseledgerError
 from releaseledger.services.changelog import build_changelog_context
 from releaseledger.services.changelog_build import build_changelog_file
+from releaseledger.services.config import (
+    config_set_releaseledger_dir,
+    config_show,
+    storage_where,
+)
 from releaseledger.services.entries import (
     add_release_entry,
     list_release_entries,
@@ -113,6 +118,13 @@ def init_command(
         bool,
         typer.Option("--force", help="Overwrite an existing config."),
     ] = False,
+    external_dir: Annotated[
+        bool,
+        typer.Option(
+            "--external-dir",
+            help="Allow --releaseledger-dir to resolve outside the workspace.",
+        ),
+    ] = False,
 ) -> None:
     """Initialize .releaseledger.toml and the default state layout."""
     state = cli_state_from_context(ctx)
@@ -124,6 +136,7 @@ def init_command(
             releaseledger_dir=releaseledger_dir,
             project_name=project_name,
             force=force,
+            external_dir=external_dir,
         )
         rel_dir = Path(str(result["releaseledger_dir"]))
         try:
@@ -385,6 +398,12 @@ def entry_add_command(
         list[str] | None,
         typer.Option("--pr", help="Pull request reference (repeatable)."),
     ] = None,
+    sources: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--source", help="Provenance source reference (repeatable)."
+        ),
+    ] = None,
     breaking: Annotated[
         bool,
         typer.Option("--breaking", help="Mark as a breaking change."),
@@ -408,6 +427,7 @@ def entry_add_command(
             paths=tuple(paths or ()),
             issues=tuple(issues or ()),
             prs=tuple(prs or ()),
+            sources=tuple(sources or ()),
             breaking=breaking,
             internal=internal,
         )
@@ -485,6 +505,12 @@ def changelog_command(
         str | None,
         typer.Option("--release-date", help="Release date YYYY-MM-DD."),
     ] = None,
+    include_sources: Annotated[
+        bool,
+        typer.Option(
+            "--include-sources", help="Show provenance sources in markdown output."
+        ),
+    ] = False,
 ) -> None:
     """Render changelog context for a release."""
     state = cli_state_from_context(ctx)
@@ -503,6 +529,7 @@ def changelog_command(
             version=version,
             format_name=format_name,
             include_internal=include_internal,
+            include_sources=include_sources,
             target_changelog=target_changelog,
             release_date=release_date,
         )
@@ -606,4 +633,116 @@ def build_command(
         result=result,
         human=human,
         json_output=state.json_output,
+    )
+
+
+storage_app = typer.Typer(help="Storage diagnostics.")
+app.add_typer(storage_app, name="storage")
+
+
+@storage_app.command("where")
+def storage_where_command(ctx: typer.Context) -> None:
+    """Show the effective storage location, layout health, and config source."""
+    state = cli_state_from_context(ctx)
+
+    def produce() -> CommandResult:
+        result = storage_where(state.cwd)
+        # Build human output
+        inside = "yes" if result.get("inside_workspace") else "no"
+        layout = "ok" if result.get("layout_exists") else "missing"
+        indexes = "ok" if result.get("indexes_exist") else "missing"
+        lines = [
+            f"Workspace: {result.get('workspace_root', '')}",
+            f"Config: {result.get('config_path', '')}",
+            f"Storage: {result.get('releaseledger_dir', '')}",
+            f"Ledger: {result.get('ledger_ref', '')}",
+            f"Inside workspace: {inside}",
+            f"Source: {result.get('source', '')}",
+            f"Layout: {layout}",
+            f"Indexes: {indexes}",
+        ]
+        human = "\n".join(lines)
+        return result, [], human
+
+    run_command(
+        command="storage.where",
+        result_type="storage_location",
+        json_output=state.json_output,
+        produce=produce,
+    )
+
+
+config_app = typer.Typer(help="Config management.")
+app.add_typer(config_app, name="config")
+
+
+@config_app.command("show")
+def config_show_command(ctx: typer.Context) -> None:
+    """Show the validated project configuration and resolved paths."""
+    state = cli_state_from_context(ctx)
+
+    def produce() -> CommandResult:
+        result = config_show(state.cwd)
+        cfg = result.get("config", {})
+        if not isinstance(cfg, dict):
+            cfg = {}
+        lines = [
+            f"Workspace: {result.get('workspace_root', '')}",
+            f"Config: {result.get('config_path', '')}",
+            f"Storage: {result.get('releaseledger_dir', '')}",
+            f"Policy: {cfg.get('releaseledger_dir_policy', 'workspace')}",
+            f"Ledger ref: {cfg.get('ledger_ref', '')}",
+        ]
+        human = "\n".join(lines)
+        return result, [], human
+
+    run_command(
+        command="config.show",
+        result_type="config_show",
+        json_output=state.json_output,
+        produce=produce,
+    )
+
+
+@config_app.command("set")
+def config_set_command(
+    ctx: typer.Context,
+    key: Annotated[str, typer.Argument(help="Config key to set.")],
+    value: Annotated[str, typer.Argument(help="New value.")],
+    external_dir: Annotated[
+        bool,
+        typer.Option(
+            "--external-dir",
+            help="Allow releaseledger_dir to resolve outside the workspace.",
+        ),
+    ] = False,
+) -> None:
+    """Atomically set a config key in .releaseledger.toml."""
+    state = cli_state_from_context(ctx)
+    if key != "releaseledger_dir":
+        err = ReleaseledgerError(
+            f"Unsupported config key: {key!r}."
+            " Only 'releaseledger_dir' is currently supported.",
+            code="USAGE_ERROR",
+            exit_code=2,
+        )
+        emit_error(
+            command="config.set", error=err, json_output=state.json_output
+        )
+        raise typer.Exit(launch_error_exit_code(err)) from err
+
+    def produce() -> CommandResult:
+        result = config_set_releaseledger_dir(
+            state.cwd, value, external_dir=external_dir
+        )
+        human = (
+            f"set releaseledger_dir: {result['before']} -> {result['after']}"
+        )
+        return result, [], human
+
+    run_command(
+        command="config.set",
+        result_type="config_set",
+        json_output=state.json_output,
+        produce=produce,
     )

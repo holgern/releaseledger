@@ -99,6 +99,7 @@ def _entry_payload(entry: ReleaseEntryRecord) -> dict[str, object]:
         "paths": list(entry.paths),
         "issues": list(entry.issues),
         "prs": list(entry.prs),
+        "sources": list(entry.sources),
         "breaking": entry.breaking,
         "internal": entry.internal,
     }

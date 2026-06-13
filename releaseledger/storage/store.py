@@ -284,7 +284,7 @@ def _release_index_row(record: ReleaseRecord) -> dict[str, object]:
 
 
 def _entry_index_row(entry: ReleaseEntryRecord) -> dict[str, object]:
-    return {
+    row: dict[str, object] = {
         "entry_id": entry.entry_id,
         "release_version": entry.release_version,
         "kind": entry.kind,
@@ -293,6 +293,9 @@ def _entry_index_row(entry: ReleaseEntryRecord) -> dict[str, object]:
         "internal": entry.internal,
         "breaking": entry.breaking,
     }
+    if entry.sources:
+        row["sources"] = list(entry.sources)
+    return row
 
 
 def rebuild_indexes(workspace_root: Path) -> None:

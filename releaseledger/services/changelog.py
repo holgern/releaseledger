@@ -49,6 +49,7 @@ def _entry_payload(entry: ReleaseEntryRecord) -> dict[str, object]:
         "paths": list(entry.paths),
         "issues": list(entry.issues),
         "prs": list(entry.prs),
+        "sources": list(entry.sources),
         "breaking": entry.breaking,
         "internal": entry.internal,
     }
@@ -64,7 +65,11 @@ def _grouped_entries(
     return grouped
 
 
-def _render_candidate_changes(entries: list[ReleaseEntryRecord]) -> str:
+def _render_candidate_changes(
+    entries: list[ReleaseEntryRecord],
+    *,
+    include_sources: bool = False,
+) -> str:
     lines: list[str] = ["## Candidate changes", ""]
     grouped = _grouped_entries(entries)
     if not grouped:
@@ -80,6 +85,9 @@ def _render_candidate_changes(entries: list[ReleaseEntryRecord]) -> str:
             if entry.paths:
                 quoted = ", ".join(f"`{p}`" for p in entry.paths)
                 lines.append(f"  - Paths: {quoted}")
+            if include_sources and entry.sources:
+                src = ", ".join(entry.sources)
+                lines.append(f"  - Sources: {src}")
         lines.append("")
     # Drop the trailing blank line for a tidy single final newline.
     while lines and lines[-1] == "":
@@ -113,6 +121,7 @@ def _render_markdown(
     entries: list[ReleaseEntryRecord],
     target_changelog: str | None,
     release_date: str | None,
+    include_sources: bool = False,
 ) -> str:
     version = release.version
     previous = release.previous_version or "none"
@@ -150,7 +159,7 @@ def _render_markdown(
             target_changelog=target_changelog, release_date=release_date
         ))
         sections.append("")
-    sections.append(_render_candidate_changes(entries))
+    sections.append(_render_candidate_changes(entries, include_sources=include_sources))
     return "\n".join(sections) + "\n"
 
 
@@ -160,6 +169,7 @@ def build_changelog_context(
     version: str,
     format_name: str = "markdown",
     include_internal: bool = False,
+    include_sources: bool = False,
     target_changelog: str | None = None,
     release_date: str | None = None,
 ) -> str | dict[str, object]:
@@ -192,4 +202,5 @@ def build_changelog_context(
         entries=entries,
         target_changelog=target_changelog,
         release_date=effective_date,
+        include_sources=include_sources,
     )

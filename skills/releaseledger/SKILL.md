@@ -24,7 +24,9 @@ Releaseledger is separate from taskledger. Do not treat `.releaseledger/` as tas
 - Do not remove existing historical changelog sections.
 - Do not change release status just to build a changelog.
 - Do not import or call `releaseledger.storage.*`, `releaseledger.services.*`, or `releaseledger.domain.*` from ad-hoc scripts during normal release work. Use the CLI or public `releaseledger.api.*`.
-- Do not use path traversal, absolute paths, or state directories outside the configured workspace.
+- Do not create or switch to external releaseledger state unless the project config already declares it or the user explicitly requests it.
+- Prefer portable relative paths with `releaseledger_dir_policy = "external"` over machine-specific absolute paths.
+- If releaseledger reports that releaseledger_dir escapes the workspace root, run `releaseledger storage where` or `releaseledger config show` before mutating anything.
 - Do not treat generated changelog source as final prose unless the command requested a final build.
 
 ## Core agent command path
@@ -44,6 +46,9 @@ releaseledger entry list VERSION
 releaseledger changelog VERSION --format markdown|json
 releaseledger build VERSION --dry-run
 releaseledger build VERSION --target-file CHANGELOG.md
+releaseledger storage where
+releaseledger config show
+releaseledger config set releaseledger_dir PATH [--external-dir]
 ```
 
 Root options belong before the subcommand:
@@ -55,12 +60,14 @@ releaseledger --cwd PATH --json release show VERSION
 ## Fresh context entry protocol
 
 1. Run `releaseledger --version`.
-2. Run `releaseledger release list`.
-3. For a known release, run `releaseledger release show VERSION`.
-4. Run `releaseledger entry list VERSION`.
-5. Generate machine context when needed:
+2. Run `releaseledger storage where` or `releaseledger --json storage where`.
+3. Run `releaseledger config show` to verify the resolved configuration.
+4. Run `releaseledger release list`.
+5. For a known release, run `releaseledger release show VERSION`.
+6. Run `releaseledger entry list VERSION`.
+7. Generate machine context when needed:
    `releaseledger changelog VERSION --format json`.
-6. Do not inspect `.releaseledger/` internals unless the CLI cannot start and the user explicitly requested forensic inspection.
+8. Do not inspect `.releaseledger/` internals unless the CLI cannot start and the user explicitly requested forensic inspection.
 
 ## Release creation protocol
 
@@ -199,6 +206,10 @@ If a `releaseledger ...` command fails with a Python traceback:
 3. If startup still fails, report that the releaseledger CLI is broken and no mutation was recorded.
 4. If startup succeeds, rerun the failed command once with the same arguments.
 5. For repeated failure, inspect command help and use explicit options rather than guessing.
+
+If `releaseledger_dir escapes the workspace root`, do not edit `.releaseledger.toml` manually.
+Use `releaseledger config set releaseledger_dir PATH --external-dir` when the sibling state directory is intentional.
+Or use `releaseledger config set releaseledger_dir .releaseledger` to reset to workspace-local.
 
 ## Public API protocol
 
