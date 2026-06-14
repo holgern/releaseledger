@@ -151,7 +151,7 @@ def resolve_releaseledger_dir(
                 "policy": policy,
             },
             remediation=[
-                "Use releaseledger_dir = \".releaseledger\", or",
+                'Use releaseledger_dir = ".releaseledger", or',
                 "Set releaseledger_dir_policy = 'external'"
                 " for intentional sibling storage, or",
                 f"Run `releaseledger config set"
@@ -188,7 +188,8 @@ def load_project_locator(
         else:
             config = load_project_config(config_path)
             releaseledger_dir = resolve_releaseledger_dir(
-                workspace_root, config.releaseledger_dir,
+                workspace_root,
+                config.releaseledger_dir,
                 policy=config.releaseledger_dir_policy,
             )
             source = (
@@ -227,7 +228,8 @@ def resolve_project_paths(workspace_root: Path) -> ProjectPaths:
     config_path = workspace_root / CANONICAL_PROJECT_CONFIG_FILENAME
     config: ProjectConfig = load_project_config(config_path)
     releaseledger_dir = resolve_releaseledger_dir(
-        workspace_root, config.releaseledger_dir,
+        workspace_root,
+        config.releaseledger_dir,
         policy=config.releaseledger_dir_policy,
     )
     ledger_dir = releaseledger_dir / "ledgers" / config.ledger_ref
@@ -323,7 +325,6 @@ def initialize_project(
 
     # Validate the chosen value with the determined policy before writing.
     resolve_releaseledger_dir(workspace_root, dir_value, policy=policy)
-
 
     toml_text = render_default_releaseledger_toml(
         releaseledger_dir=dir_value,

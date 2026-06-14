@@ -243,9 +243,7 @@ def _validate_paths(values: tuple[str, ...]) -> tuple[str, ...]:
     validated: list[str] = []
     for raw in values:
         try:
-            value = ledgercore.validate_relative_posix_path(
-                raw, field_name="paths"
-            )
+            value = ledgercore.validate_relative_posix_path(raw, field_name="paths")
         except ledgercore.PathValidationError as exc:
             raise LaunchError(
                 str(exc),
@@ -308,9 +306,7 @@ def entry_from_dict(data: dict[str, object]) -> ReleaseEntryRecord:
             _require_str(data.get("status", "accepted"), "status")
         ),
         audience=_require_optional_str(data.get("audience"), "audience"),
-        scopes=normalize_scopes(
-            _require_str_tuple(data.get("scopes", []), "scopes")
-        ),
+        scopes=normalize_scopes(_require_str_tuple(data.get("scopes", []), "scopes")),
         source_refs=validate_source_refs(
             _require_str_tuple(data.get("source_refs", []), "source_refs")
         ),

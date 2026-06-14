@@ -248,9 +248,7 @@ def add_release_entry(
         data={"kind": record.kind, "status": record.status},
     )
     rebuild_indexes(workspace_root)
-    return _payload(
-        workspace_root, release.version, record, events=[event.event_id]
-    )
+    return _payload(workspace_root, release.version, record, events=[event.event_id])
 
 
 def _find_entry(
@@ -303,9 +301,7 @@ def update_release_entry(
         status=status if status is not None else existing.status,
         audience=audience if audience is not None else existing.audience,
         scopes=scopes if scopes is not None else existing.scopes,
-        source_refs=(
-            source_refs if source_refs is not None else existing.source_refs
-        ),
+        source_refs=(source_refs if source_refs is not None else existing.source_refs),
         paths=paths if paths is not None else existing.paths,
         issues=issues if issues is not None else existing.issues,
         prs=prs if prs is not None else existing.prs,
@@ -358,15 +354,16 @@ def update_release_entry(
         event=EVENT_ENTRY_UPDATED,
         release_version=release_version,
         entry_id=entry_id,
-        data={"fields": sorted(
-            field for field, value in changes.items()
-            if getattr(existing, field) != value
-        )},
+        data={
+            "fields": sorted(
+                field
+                for field, value in changes.items()
+                if getattr(existing, field) != value
+            )
+        },
     )
     rebuild_indexes(workspace_root)
-    return _payload(
-        workspace_root, release_version, updated, events=[event.event_id]
-    )
+    return _payload(workspace_root, release_version, updated, events=[event.event_id])
 
 
 def _globalize_legacy_ref(value: object, source_ledger: str | None) -> str | None:
@@ -461,9 +458,7 @@ def import_release_entry_file(
             exit_code=2,
         )
     order = (
-        existing.order
-        if existing and existing.order is not None
-        else len(entries) + 1
+        existing.order if existing and existing.order is not None else len(entries) + 1
     )
     record = _candidate(
         entry_id=entry_id,
@@ -498,18 +493,14 @@ def import_release_entry_file(
         data={"source_path": str(source_path), "replaced": existing is not None},
     )
     rebuild_indexes(workspace_root)
-    return _payload(
-        workspace_root, release_version, record, events=[event.event_id]
-    )
+    return _payload(workspace_root, release_version, record, events=[event.event_id])
 
 
 def load_entry_batch_file(source_path: Path) -> list[dict[str, object]]:
     try:
         payload = ledgercore.load_yaml_object(source_path, label="entry batch")
     except ledgercore.YamlStoreError as exc:
-        raise LaunchError(
-            str(exc), code=CODE_VALIDATION_ERROR, exit_code=2
-        ) from exc
+        raise LaunchError(str(exc), code=CODE_VALIDATION_ERROR, exit_code=2) from exc
     raw_entries = payload.get("entries")
     if not isinstance(raw_entries, list):
         raise LaunchError(

@@ -128,7 +128,7 @@ Success:
   "result": {
     "kind": "release",
     "ledger_ref": "main",
-    "release": {"version": "1.2.0", "status": "released", "...": "..."},
+    "release": { "version": "1.2.0", "status": "released", "...": "..." },
     "events": ["event-0001"]
   },
   "events": ["event-0001"]

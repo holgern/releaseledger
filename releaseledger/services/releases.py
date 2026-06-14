@@ -350,9 +350,7 @@ def update_release(
         release_version=version,
         data={
             "fields": sorted(
-                key
-                for key, value in values.items()
-                if getattr(existing, key) != value
+                key for key, value in values.items() if getattr(existing, key) != value
             )
         },
     )

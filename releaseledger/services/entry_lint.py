@@ -69,9 +69,7 @@ def validate_entry_summary(summary: str) -> list[dict[str, str]]:
         )
     if summary.lstrip().startswith("#"):
         issues.append(
-            _issue(
-                "error", "Summary must not be a Markdown heading.", code="heading"
-            )
+            _issue("error", "Summary must not be a Markdown heading.", code="heading")
         )
     if "TODO" in summary.upper():
         issues.append(
@@ -113,9 +111,7 @@ def validate_entry_summary(summary: str) -> list[dict[str, str]]:
     return issues
 
 
-def assert_entry_summary_valid(
-    summary: str, *, fail_on_warning: bool = True
-) -> None:
+def assert_entry_summary_valid(summary: str, *, fail_on_warning: bool = True) -> None:
     issues = validate_entry_summary(summary)
     blocking = [
         issue

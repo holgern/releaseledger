@@ -283,9 +283,7 @@ def _literal_replacer(replacement: str) -> Callable[[re.Match[str]], str]:
     return _replace
 
 
-def _apply_postprocessors(
-    text: str, postprocessors: tuple[dict[str, str], ...]
-) -> str:
+def _apply_postprocessors(text: str, postprocessors: tuple[dict[str, str], ...]) -> str:
     for step in postprocessors:
         # Literal replacement: a closure returning the replacement so the
         # replacement string is never interpreted for backreferences.
@@ -358,9 +356,7 @@ def render_changelog_section(
     if isinstance(context_warnings, list):
         warnings.extend(str(item) for item in context_warnings)
     if entry_count == 0 and not config.changelog_render_always:
-        warnings.append(
-            "Release has no changelog entries; rendered an empty section."
-        )
+        warnings.append("Release has no changelog entries; rendered an empty section.")
 
     return {
         "kind": "changelog_build",
@@ -391,9 +387,7 @@ def find_release_section(text: str, version: str) -> _Span | None:
     heading through just before the next ``## `` heading or EOF.
     """
     escaped = re.escape(version)
-    heading_re = re.compile(
-        _HEADING_RE_TEMPLATE.format(version=escaped), re.MULTILINE
-    )
+    heading_re = re.compile(_HEADING_RE_TEMPLATE.format(version=escaped), re.MULTILINE)
     lines = text.splitlines(keepends=True)
     heading_line_index: int | None = None
     for index, line in enumerate(lines):
@@ -459,9 +453,11 @@ def insert_release_section(text: str, section: str) -> str:
         while after < len(lines) and not lines[after].strip():
             after += 1
         # Skip non-heading intro lines directly under the title.
-        while after < len(lines) and lines[after].strip() and not lines[
-            after
-        ].lstrip().startswith("#"):
+        while (
+            after < len(lines)
+            and lines[after].strip()
+            and not lines[after].lstrip().startswith("#")
+        ):
             after += 1
         return _splice(lines, after, section)
 

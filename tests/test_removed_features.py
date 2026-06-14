@@ -277,9 +277,7 @@ def test_entry_batch_is_atomic_and_deterministic(tmp_path: Path) -> None:
     )
     assert preview["result"]["entry_ids"] == ["entry-0001", "entry-0002"]
     assert preview["result"]["written"] is False
-    added = _json_run(
-        tmp_path, "entry", "add-many", "1.0.0", "--file", str(batch)
-    )
+    added = _json_run(tmp_path, "entry", "add-many", "1.0.0", "--file", str(batch))
     assert added["result"]["entry_ids"] == ["entry-0001", "entry-0002"]
     assert len(added["result"]["events"]) == 1
 
@@ -291,9 +289,7 @@ def test_entry_batch_is_atomic_and_deterministic(tmp_path: Path) -> None:
         "  - kind: unknown\n"
         "    summary: Changed invalid item\n"
     )
-    failed = _run(
-        tmp_path, "entry", "add-many", "1.0.0", "--file", str(invalid)
-    )
+    failed = _run(tmp_path, "entry", "add-many", "1.0.0", "--file", str(invalid))
     assert failed.exit_code != 0
     listed = _json_run(tmp_path, "entry", "list", "1.0.0")
     assert len(listed["result"]["entries"]) == 2
@@ -355,9 +351,7 @@ def test_import_legacy_entry_requires_source_ledger(tmp_path: Path) -> None:
         },
         body="Legacy details",
     )
-    failed = _run(
-        tmp_path, "entry", "import", "1.0.0", "--file", str(source)
-    )
+    failed = _run(tmp_path, "entry", "import", "1.0.0", "--file", str(source))
     assert failed.exit_code != 0
     imported = _json_run(
         tmp_path,
@@ -428,8 +422,7 @@ def test_entry_lint_warns_without_accepted_entries(tmp_path: Path) -> None:
     )
     payload = _json_run(tmp_path, "entry", "lint", "1.0.0")
     assert any(
-        issue["code"] == "no_accepted_entries"
-        for issue in payload["result"]["issues"]
+        issue["code"] == "no_accepted_entries" for issue in payload["result"]["issues"]
     )
 
 
@@ -606,9 +599,7 @@ def test_strict_build_empty_and_source_coverage_gates(tmp_path: Path) -> None:
     )
     empty = _run(tmp_path, "build", "1.0.0", "--dry-run", "--strict")
     assert empty.exit_code != 0
-    allowed = _run(
-        tmp_path, "build", "1.0.0", "--dry-run", "--strict", "--allow-empty"
-    )
+    allowed = _run(tmp_path, "build", "1.0.0", "--dry-run", "--strict", "--allow-empty")
     assert allowed.exit_code == 0, allowed.output
 
     assert (

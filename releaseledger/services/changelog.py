@@ -60,6 +60,7 @@ def _entry_payload(entry: ReleaseEntryRecord) -> dict[str, object]:
         "internal": entry.internal,
     }
 
+
 def _grouped_entries(
     entries: list[ReleaseEntryRecord],
 ) -> list[tuple[str, list[ReleaseEntryRecord]]]:
@@ -169,9 +170,11 @@ def _render_markdown(
     sections.append(f"- Release date: {date_text}")
     sections.append("")
     if target_changelog is not None:
-        sections.extend(_render_edit_guidance(
-            target_changelog=target_changelog, release_date=release_date
-        ))
+        sections.extend(
+            _render_edit_guidance(
+                target_changelog=target_changelog, release_date=release_date
+            )
+        )
         sections.append("")
     sections.append(_render_candidate_changes(entries, include_sources=include_sources))
     counts = filtered_counts or {}

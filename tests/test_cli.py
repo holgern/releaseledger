@@ -125,7 +125,7 @@ class TestPhase2ConfigLayout:
     def test_init_writes_canonical_config_keys(self, tmp_path: Path) -> None:
         _init_project(tmp_path)
         text = (tmp_path / ".releaseledger.toml").read_text()
-        assert "releaseledger_dir = \".releaseledger\"" in text
+        assert 'releaseledger_dir = ".releaseledger"' in text
         assert "config_version = 1" in text
         assert "[ledger]" in text
         assert "[release]" in text
@@ -155,7 +155,7 @@ class TestPhase2ConfigLayout:
         assert result.exit_code == 0, result.stdout
         assert (tmp_path / ".custom-rl" / "ledgers" / "main" / "releases").is_dir()
         text = (tmp_path / ".releaseledger.toml").read_text()
-        assert "releaseledger_dir = \".custom-rl\"" in text
+        assert 'releaseledger_dir = ".custom-rl"' in text
 
     def test_subdirectory_discovers_root(self, tmp_path: Path) -> None:
         _init_project(tmp_path)
@@ -183,7 +183,7 @@ class TestPhase2ConfigLayout:
 
     def test_unknown_config_keys_rejected(self, tmp_path: Path) -> None:
         (tmp_path / ".releaseledger.toml").write_text(
-            "bogus_key = true\nreleaseledger_dir = \".releaseledger\"\n"
+            'bogus_key = true\nreleaseledger_dir = ".releaseledger"\n'
         )
         from releaseledger.errors import LaunchError
         from releaseledger.storage.paths import require_project
@@ -202,9 +202,7 @@ class TestPhase2ConfigLayout:
         assert "escapes" in _human_error(result)
 
     def test_init_json_envelope(self, tmp_path: Path) -> None:
-        payload = _json(
-            runner.invoke(app, ["--cwd", str(tmp_path), "--json", "init"])
-        )
+        payload = _json(runner.invoke(app, ["--cwd", str(tmp_path), "--json", "init"]))
         assert payload["ok"] is True
         assert payload["command"] == "init"
         assert payload["result_type"] == "project_init"
@@ -222,8 +220,13 @@ class TestPhase3Releases:
         result = _run(tmp_path, "release", "tag", "1.2.0", "--note", "MVP")
         assert result.exit_code == 0, result.stdout
         path = (
-            tmp_path / ".releaseledger" / "ledgers" / "main"
-            / "releases" / "1.2.0" / "release.md"
+            tmp_path
+            / ".releaseledger"
+            / "ledgers"
+            / "main"
+            / "releases"
+            / "1.2.0"
+            / "release.md"
         )
         assert path.is_file()
         import ledgercore
@@ -275,8 +278,14 @@ class TestPhase3Releases:
     def test_release_show_returns_persisted_metadata(self, tmp_path: Path) -> None:
         _init_project(tmp_path)
         _run(
-            tmp_path, "release", "create", "1.2.0",
-            "--status", "planned", "--title", "T",
+            tmp_path,
+            "release",
+            "create",
+            "1.2.0",
+            "--status",
+            "planned",
+            "--title",
+            "T",
         )
         result = _run(tmp_path, "release", "show", "1.2.0")
         assert result.exit_code == 0, result.stdout
@@ -293,7 +302,12 @@ class TestPhase3Releases:
         _init_project(tmp_path)
         _run(tmp_path, "release", "create", "1.2.0")
         result = _run(
-            tmp_path, "release", "finalize", "1.2.0", "--released-at", "2026-06-13",
+            tmp_path,
+            "release",
+            "finalize",
+            "1.2.0",
+            "--released-at",
+            "2026-06-13",
         )
         assert result.exit_code == 0, result.stdout
         show = _run(tmp_path, "release", "show", "1.2.0")
@@ -347,16 +361,28 @@ class TestPhase4Entries:
         _init_project(tmp_path)
         _run(tmp_path, "release", "create", "1.2.0")
         result = _run(
-            tmp_path, "entry", "add", "1.2.0",
-            "--kind", "added",
-            "--summary", "Add release bundle storage",
-            "--path", "releaseledger/storage/store.py",
+            tmp_path,
+            "entry",
+            "add",
+            "1.2.0",
+            "--kind",
+            "added",
+            "--summary",
+            "Add release bundle storage",
+            "--path",
+            "releaseledger/storage/store.py",
         )
         assert result.exit_code == 0, result.stdout
         assert "added entry entry-0001 to release 1.2.0" in result.stdout
         entry_path = (
-            tmp_path / ".releaseledger" / "ledgers" / "main"
-            / "releases" / "1.2.0" / "entries" / "entry-0001.md"
+            tmp_path
+            / ".releaseledger"
+            / "ledgers"
+            / "main"
+            / "releases"
+            / "1.2.0"
+            / "entries"
+            / "entry-0001.md"
         )
         assert entry_path.is_file()
         show = _json(_jrun(tmp_path, "release", "show", "1.2.0"))
@@ -392,8 +418,16 @@ class TestPhase4Entries:
         _init_project(tmp_path)
         _run(tmp_path, "release", "create", "1.2.0")
         result = _run(
-            tmp_path, "entry", "add", "1.2.0",
-            "--kind", "added", "--summary", "x", "--path", "../escape.py",
+            tmp_path,
+            "entry",
+            "add",
+            "1.2.0",
+            "--kind",
+            "added",
+            "--summary",
+            "x",
+            "--path",
+            "../escape.py",
         )
         assert result.exit_code != 0
 
@@ -408,8 +442,14 @@ class TestPhase4Entries:
         _init_project(tmp_path)
         _run(tmp_path, "release", "create", "1.2.0")
         _run(
-            tmp_path, "entry", "add", "1.2.0", "--kind", "added",
-            "--summary", "Added X",
+            tmp_path,
+            "entry",
+            "add",
+            "1.2.0",
+            "--kind",
+            "added",
+            "--summary",
+            "Added X",
         )
         result = _run(tmp_path, "entry", "list", "1.2.0")
         assert "ENTRIES" in result.stdout
@@ -420,8 +460,15 @@ class TestPhase4Entries:
         _init_project(tmp_path)
         _run(tmp_path, "release", "create", "1.2.0")
         _run(
-            tmp_path, "entry", "add", "1.2.0",
-            "--kind", "internal", "--summary", "Refactor internals", "--internal",
+            tmp_path,
+            "entry",
+            "add",
+            "1.2.0",
+            "--kind",
+            "internal",
+            "--summary",
+            "Refactor internals",
+            "--internal",
         )
         payload = _json(_jrun(tmp_path, "entry", "list", "1.2.0"))
         entries = payload["result"]["entries"]
@@ -434,8 +481,14 @@ class TestPhase4Entries:
         _run(tmp_path, "release", "create", "1.2.0")
         payload = _json(
             _jrun(
-                tmp_path, "entry", "add", "1.2.0", "--kind", "added",
-                "--summary", "Add release bundle storage",
+                tmp_path,
+                "entry",
+                "add",
+                "1.2.0",
+                "--kind",
+                "added",
+                "--summary",
+                "Add release bundle storage",
             )
         )
         assert payload["ok"] is True
@@ -456,13 +509,26 @@ class TestPhase5Changelog:
         _init_project(tmp_path)
         _run(tmp_path, "release", "create", "1.2.0")
         _run(
-            tmp_path, "entry", "add", "1.2.0", "--kind", "added",
-            "--summary", "Add release bundle storage",
-            "--path", "releaseledger/storage/store.py",
+            tmp_path,
+            "entry",
+            "add",
+            "1.2.0",
+            "--kind",
+            "added",
+            "--summary",
+            "Add release bundle storage",
+            "--path",
+            "releaseledger/storage/store.py",
         )
         _run(
-            tmp_path, "entry", "add", "1.2.0", "--kind", "fixed",
-            "--summary", "Fix version filename validation",
+            tmp_path,
+            "entry",
+            "add",
+            "1.2.0",
+            "--kind",
+            "fixed",
+            "--summary",
+            "Fix version filename validation",
         )
 
     def test_markdown_includes_instruction_and_changes(self, tmp_path: Path) -> None:
@@ -488,8 +554,13 @@ class TestPhase5Changelog:
         no_target = _run(tmp_path, "changelog", "1.2.0").stdout
         assert "## Changelog edit guidance" not in no_target
         with_target = _run(
-            tmp_path, "changelog", "1.2.0",
-            "--target-changelog", "CHANGELOG.md", "--release-date", "2026-06-13",
+            tmp_path,
+            "changelog",
+            "1.2.0",
+            "--target-changelog",
+            "CHANGELOG.md",
+            "--release-date",
+            "2026-06-13",
         ).stdout
         assert "## Changelog edit guidance" in with_target
         assert "Target changelog: CHANGELOG.md" in with_target
@@ -519,12 +590,25 @@ class TestPhase5Changelog:
         _init_project(tmp_path)
         _run(tmp_path, "release", "create", "1.2.0")
         _run(
-            tmp_path, "entry", "add", "1.2.0", "--kind", "added",
-            "--summary", "visible",
+            tmp_path,
+            "entry",
+            "add",
+            "1.2.0",
+            "--kind",
+            "added",
+            "--summary",
+            "visible",
         )
         _run(
-            tmp_path, "entry", "add", "1.2.0",
-            "--kind", "internal", "--summary", "hidden refactors", "--internal",
+            tmp_path,
+            "entry",
+            "add",
+            "1.2.0",
+            "--kind",
+            "internal",
+            "--summary",
+            "hidden refactors",
+            "--internal",
         )
         default_md = _run(tmp_path, "changelog", "1.2.0").stdout
         assert "visible" in default_md
@@ -537,9 +621,7 @@ class TestPhase5Changelog:
     def test_output_writes_file(self, tmp_path: Path) -> None:
         self._seed(tmp_path)
         out_file = tmp_path / "changes.md"
-        result = _run(
-            tmp_path, "changelog", "1.2.0", "--output", str(out_file)
-        )
+        result = _run(tmp_path, "changelog", "1.2.0", "--output", str(out_file))
         assert result.exit_code == 0, result.stdout
         assert out_file.is_file()
         assert "# Changelog source" in out_file.read_text()
@@ -549,8 +631,13 @@ class TestPhase5Changelog:
         self._seed(tmp_path)
         out_file = tmp_path / "changes.json"
         result = _run(
-            tmp_path, "changelog", "1.2.0", "--format", "json",
-            "--output", str(out_file),
+            tmp_path,
+            "changelog",
+            "1.2.0",
+            "--format",
+            "json",
+            "--output",
+            str(out_file),
         )
         assert result.exit_code == 0, result.stdout
         payload = json.loads(out_file.read_text())
@@ -561,7 +648,6 @@ class TestPhase5Changelog:
         result = _run(tmp_path, "changelog", "9.9.9")
         assert result.exit_code != 0
         assert "not found" in _human_error(result).lower()
-
 
 
 # ---------------------------------------------------------------------------
@@ -575,18 +661,32 @@ class TestPhase7Build:
         _init_project(tmp_path)
         _run(tmp_path, "release", "create", "1.2.0")
         _run(
-            tmp_path, "entry", "add", "1.2.0", "--kind", "added",
-            "--summary", "Add release bundle storage",
-            "--path", "releaseledger/storage/store.py",
+            tmp_path,
+            "entry",
+            "add",
+            "1.2.0",
+            "--kind",
+            "added",
+            "--summary",
+            "Add release bundle storage",
+            "--path",
+            "releaseledger/storage/store.py",
         )
         _run(
-            tmp_path, "entry", "add", "1.2.0", "--kind", "fixed",
-            "--summary", "Fix version filename validation",
+            tmp_path,
+            "entry",
+            "add",
+            "1.2.0",
+            "--kind",
+            "fixed",
+            "--summary",
+            "Fix version filename validation",
         )
 
     @staticmethod
-    def _write_config(tmp_path: Path, *, body: str | None = None,
-                     postprocessors: str | None = None) -> None:
+    def _write_config(
+        tmp_path: Path, *, body: str | None = None, postprocessors: str | None = None
+    ) -> None:
         """Overwrite the project config with a known [changelog] block."""
         pp = postprocessors if postprocessors is not None else "[]"
         if body is not None:
@@ -624,15 +724,17 @@ class TestPhase7Build:
             'footer = "<!-- generated by releaseledger -->"',
             f"postprocessors = {pp}",
         ]
-        (tmp_path / ".releaseledger.toml").write_text(
-            "\n".join(lines) + "\n"
-        )
+        (tmp_path / ".releaseledger.toml").write_text("\n".join(lines) + "\n")
 
     def test_build_dry_run_renders_final_section(self, tmp_path: Path) -> None:
         self._seed(tmp_path)
         result = _run(
-            tmp_path, "build", "1.2.0", "--dry-run",
-            "--release-date", "2026-06-13",
+            tmp_path,
+            "build",
+            "1.2.0",
+            "--dry-run",
+            "--release-date",
+            "2026-06-13",
         )
         assert result.exit_code == 0, result.stdout
         assert "## [1.2.0] - 2026-06-13" in result.stdout
@@ -648,8 +750,13 @@ class TestPhase7Build:
             "## [1.1.0] - 2026-01-01\n\n- Old\n"
         )
         result = _run(
-            tmp_path, "build", "1.2.0",
-            "--release-date", "2026-06-13", "--target-file", "CHANGELOG.md",
+            tmp_path,
+            "build",
+            "1.2.0",
+            "--release-date",
+            "2026-06-13",
+            "--target-file",
+            "CHANGELOG.md",
         )
         assert result.exit_code == 0, result.stdout
         text = (tmp_path / "CHANGELOG.md").read_text()
@@ -662,14 +769,16 @@ class TestPhase7Build:
         assert text.endswith("\n")
         assert text.count("## [1.2.0] - 2026-06-13") == 1
 
-    def test_build_creates_parent_for_relative_target(
-        self, tmp_path: Path
-    ) -> None:
+    def test_build_creates_parent_for_relative_target(self, tmp_path: Path) -> None:
         self._seed(tmp_path)
         result = _run(
-            tmp_path, "build", "1.2.0",
-            "--release-date", "2026-06-13",
-            "--target-file", "docs/CHANGELOG.md",
+            tmp_path,
+            "build",
+            "1.2.0",
+            "--release-date",
+            "2026-06-13",
+            "--target-file",
+            "docs/CHANGELOG.md",
         )
         assert result.exit_code == 0, _human_error(result)
         target = tmp_path / "docs" / "CHANGELOG.md"
@@ -679,13 +788,23 @@ class TestPhase7Build:
     def test_build_refuses_duplicate_without_replace(self, tmp_path: Path) -> None:
         self._seed(tmp_path)
         first = _run(
-            tmp_path, "build", "1.2.0", "--release-date", "2026-06-13",
-            "--target-file", "CHANGELOG.md",
+            tmp_path,
+            "build",
+            "1.2.0",
+            "--release-date",
+            "2026-06-13",
+            "--target-file",
+            "CHANGELOG.md",
         )
         assert first.exit_code == 0, _human_error(first)
         second = _run(
-            tmp_path, "build", "1.2.0", "--release-date", "2026-06-13",
-            "--target-file", "CHANGELOG.md",
+            tmp_path,
+            "build",
+            "1.2.0",
+            "--release-date",
+            "2026-06-13",
+            "--target-file",
+            "CHANGELOG.md",
         )
         assert second.exit_code != 0
         assert "section" in _human_error(second).lower()
@@ -693,17 +812,34 @@ class TestPhase7Build:
     def test_build_replace_existing(self, tmp_path: Path) -> None:
         self._seed(tmp_path)
         _run(
-            tmp_path, "build", "1.2.0", "--release-date", "2026-06-13",
-            "--target-file", "CHANGELOG.md",
+            tmp_path,
+            "build",
+            "1.2.0",
+            "--release-date",
+            "2026-06-13",
+            "--target-file",
+            "CHANGELOG.md",
         )
         # Add another entry after the first build.
         _run(
-            tmp_path, "entry", "add", "1.2.0", "--kind", "changed",
-            "--summary", "Change rendering pipeline",
+            tmp_path,
+            "entry",
+            "add",
+            "1.2.0",
+            "--kind",
+            "changed",
+            "--summary",
+            "Change rendering pipeline",
         )
         replaced = _run(
-            tmp_path, "build", "1.2.0", "--release-date", "2026-06-13",
-            "--target-file", "CHANGELOG.md", "--replace-existing",
+            tmp_path,
+            "build",
+            "1.2.0",
+            "--release-date",
+            "2026-06-13",
+            "--target-file",
+            "CHANGELOG.md",
+            "--replace-existing",
         )
         assert replaced.exit_code == 0, _human_error(replaced)
         text = (tmp_path / "CHANGELOG.md").read_text()
@@ -714,12 +850,25 @@ class TestPhase7Build:
         _init_project(tmp_path)
         _run(tmp_path, "release", "create", "1.2.0")
         _run(
-            tmp_path, "entry", "add", "1.2.0", "--kind", "added",
-            "--summary", "visible feature",
+            tmp_path,
+            "entry",
+            "add",
+            "1.2.0",
+            "--kind",
+            "added",
+            "--summary",
+            "visible feature",
         )
         _run(
-            tmp_path, "entry", "add", "1.2.0", "--kind", "internal",
-            "--summary", "secret refactor", "--internal",
+            tmp_path,
+            "entry",
+            "add",
+            "1.2.0",
+            "--kind",
+            "internal",
+            "--summary",
+            "secret refactor",
+            "--internal",
         )
         default = _run(tmp_path, "build", "1.2.0", "--dry-run").stdout
         assert "visible feature" in default
@@ -752,8 +901,14 @@ class TestPhase7Build:
         )
         _run(tmp_path, "release", "create", "1.2.0")
         _run(
-            tmp_path, "entry", "add", "1.2.0", "--kind", "added",
-            "--summary", "Add release bundle storage",
+            tmp_path,
+            "entry",
+            "add",
+            "1.2.0",
+            "--kind",
+            "added",
+            "--summary",
+            "Add release bundle storage",
         )
         out = _run(tmp_path, "build", "1.2.0", "--dry-run").stdout
         assert "Release 1.2.0" in out
@@ -765,13 +920,18 @@ class TestPhase7Build:
         _init_project(tmp_path)
         self._write_config(
             tmp_path,
-            postprocessors="[{ pattern = \"releaseledger\", "
-                             "replace = \"Releaseledger\" }]"
+            postprocessors='[{ pattern = "releaseledger", replace = "Releaseledger" }]',
         )
         _run(tmp_path, "release", "create", "1.2.0")
         _run(
-            tmp_path, "entry", "add", "1.2.0", "--kind", "added",
-            "--summary", "Add releaseledger build command",
+            tmp_path,
+            "entry",
+            "add",
+            "1.2.0",
+            "--kind",
+            "added",
+            "--summary",
+            "Add releaseledger build command",
         )
         out = _run(tmp_path, "build", "1.2.0", "--dry-run").stdout
         assert "Releaseledger build command" in out
@@ -790,6 +950,7 @@ class TestPhase7Build:
         assert "body =" in text
         assert "postprocessors = []" in text
 
+
 # ---------------------------------------------------------------------------
 # Phase 6: indexes and events
 # ---------------------------------------------------------------------------
@@ -799,24 +960,16 @@ class TestPhase6EventsIndexes:
     @staticmethod
     def _events_path(tmp_path: Path) -> Path:
         return (
-            tmp_path / ".releaseledger" / "ledgers" / "main"
-            / "events" / "events.jsonl"
+            tmp_path / ".releaseledger" / "ledgers" / "main" / "events" / "events.jsonl"
         )
 
     @staticmethod
     def _index_path(tmp_path: Path, name: str) -> Path:
-        return (
-            tmp_path / ".releaseledger" / "ledgers" / "main"
-            / "indexes" / name
-        )
+        return tmp_path / ".releaseledger" / "ledgers" / "main" / "indexes" / name
 
     @staticmethod
     def _read_jsonl(path: Path) -> list[dict]:
-        return [
-            json.loads(ln)
-            for ln in path.read_text().splitlines()
-            if ln.strip()
-        ]
+        return [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
 
     def test_events_jsonl_receives_release_events(self, tmp_path: Path) -> None:
         _init_project(tmp_path)
@@ -833,8 +986,14 @@ class TestPhase6EventsIndexes:
         _init_project(tmp_path)
         _run(tmp_path, "release", "tag", "1.2.0")
         _run(
-            tmp_path, "entry", "add", "1.2.0", "--kind", "added",
-            "--summary", "Add release bundle storage",
+            tmp_path,
+            "entry",
+            "add",
+            "1.2.0",
+            "--kind",
+            "added",
+            "--summary",
+            "Add release bundle storage",
         )
         events_path = self._events_path(tmp_path)
         rows = self._read_jsonl(events_path)
@@ -847,9 +1006,7 @@ class TestPhase6EventsIndexes:
     def test_indexes_are_valid_json_arrays(self, tmp_path: Path) -> None:
         _init_project(tmp_path)
         _run(tmp_path, "release", "tag", "1.2.0")
-        _run(
-            tmp_path, "entry", "add", "1.2.0", "--kind", "added", "--summary", "X"
-        )
+        _run(tmp_path, "entry", "add", "1.2.0", "--kind", "added", "--summary", "X")
         releases = json.loads(self._index_path(tmp_path, "releases.json").read_text())
         entries = json.loads(self._index_path(tmp_path, "entries.json").read_text())
         assert isinstance(releases, list)
@@ -864,9 +1021,7 @@ class TestPhase6EventsIndexes:
 
         _init_project(tmp_path)
         _run(tmp_path, "release", "tag", "1.2.0")
-        _run(
-            tmp_path, "entry", "add", "1.2.0", "--kind", "fixed", "--summary", "Y"
-        )
+        _run(tmp_path, "entry", "add", "1.2.0", "--kind", "fixed", "--summary", "Y")
         before_r = self._index_path(tmp_path, "releases.json").read_text()
         before_e = self._index_path(tmp_path, "entries.json").read_text()
         rebuild_indexes(tmp_path)
@@ -879,12 +1034,24 @@ class TestPhase6EventsIndexes:
         _run(tmp_path, "release", "tag", "1.0.0", "--released-at", "2026-01-01")
         _run(tmp_path, "release", "tag", "2.0.0", "--released-at", "2026-02-01")
         _run(
-            tmp_path, "entry", "add", "1.0.0", "--kind", "added",
-            "--summary", "in 1.0.0",
+            tmp_path,
+            "entry",
+            "add",
+            "1.0.0",
+            "--kind",
+            "added",
+            "--summary",
+            "in 1.0.0",
         )
         _run(
-            tmp_path, "entry", "add", "2.0.0", "--kind", "changed",
-            "--summary", "in 2.0.0",
+            tmp_path,
+            "entry",
+            "add",
+            "2.0.0",
+            "--kind",
+            "changed",
+            "--summary",
+            "in 2.0.0",
         )
         releases = json.loads(self._index_path(tmp_path, "releases.json").read_text())
         entries = json.loads(self._index_path(tmp_path, "entries.json").read_text())
@@ -955,10 +1122,10 @@ class TestPhase8StorageWhere:
         """storage where must not mutate .releaseledger or .releaseledger.toml."""
         _init_project(tmp_path)
         toml_before = (tmp_path / ".releaseledger.toml").read_text()
-        layout_before = set(p.name for p in (tmp_path / ".releaseledger").rglob("*"))
+        layout_before = {p.name for p in (tmp_path / ".releaseledger").rglob("*")}
         _run(tmp_path, "storage", "where")
         assert (tmp_path / ".releaseledger.toml").read_text() == toml_before
-        layout_after = set(p.name for p in (tmp_path / ".releaseledger").rglob("*"))
+        layout_after = {p.name for p in (tmp_path / ".releaseledger").rglob("*")}
         assert layout_after == layout_before
 
     def test_storage_where_uninitialized(self, tmp_path: Path) -> None:
@@ -1012,8 +1179,14 @@ class TestPhase9ExternalPolicy:
         rel = os.path.relpath(target, tmp_path)
         result = runner.invoke(
             app,
-            ["--cwd", str(tmp_path), "init",
-             "--releaseledger-dir", rel, "--external-dir"],
+            [
+                "--cwd",
+                str(tmp_path),
+                "init",
+                "--releaseledger-dir",
+                rel,
+                "--external-dir",
+            ],
         )
         assert result.exit_code == 0, result.stdout
         toml = (tmp_path / ".releaseledger.toml").read_text()
@@ -1026,8 +1199,14 @@ class TestPhase9ExternalPolicy:
         """JSON error when external dir is rejected includes remediation hints."""
         result = runner.invoke(
             app,
-            ["--cwd", str(tmp_path), "--json", "init",
-             "--releaseledger-dir", "../escape"],
+            [
+                "--cwd",
+                str(tmp_path),
+                "--json",
+                "init",
+                "--releaseledger-dir",
+                "../escape",
+            ],
         )
         payload = json.loads(result.stdout)
         assert payload["ok"] is False
@@ -1043,8 +1222,14 @@ class TestPhase9ExternalPolicy:
         value, resolved_path, and policy."""
         result = runner.invoke(
             app,
-            ["--cwd", str(tmp_path), "--json", "init",
-             "--releaseledger-dir", "../escape"],
+            [
+                "--cwd",
+                str(tmp_path),
+                "--json",
+                "init",
+                "--releaseledger-dir",
+                "../escape",
+            ],
         )
         payload = json.loads(result.stdout)
         err = payload["error"]
@@ -1072,11 +1257,10 @@ class TestPhase9ExternalPolicy:
         )
         with pytest.raises(Exception) as exc_info:
             from releaseledger.storage.paths import require_project
+
             require_project(tmp_path)
         msg = str(exc_info.value)
         assert "releaseledger_dir_policy" in msg or "workspace" in msg
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -1109,38 +1293,36 @@ class TestPhase10ConfigCommands:
 
     def test_config_set_rejects_uninitialized(self, tmp_path: Path) -> None:
         """config set without init raises NOT_FOUND."""
-        result = _run(
-            tmp_path, "config", "set", "releaseledger_dir", ".custom"
-        )
+        result = _run(tmp_path, "config", "set", "releaseledger_dir", ".custom")
         assert result.exit_code != 0
         assert "not initialized" in _human_error(result).lower()
 
     def test_config_set_rejects_external_without_flag(self, tmp_path: Path) -> None:
         """config set with external relative dir requires --external-dir."""
         _init_project(tmp_path)
-        result = _run(
-            tmp_path, "config", "set", "releaseledger_dir", "../escape"
-        )
+        result = _run(tmp_path, "config", "set", "releaseledger_dir", "../escape")
         assert result.exit_code != 0
         assert "escapes" in _human_error(result)
 
     def test_config_set_workspace_local_dir(self, tmp_path: Path) -> None:
         """config set to a workspace-local dir succeeds and rewrites TOML."""
         _init_project(tmp_path)
-        result = _run(
-            tmp_path, "config", "set", "releaseledger_dir", ".custom-rl"
-        )
+        result = _run(tmp_path, "config", "set", "releaseledger_dir", ".custom-rl")
         assert result.exit_code == 0, result.stdout
         toml = (tmp_path / ".releaseledger.toml").read_text()
-        assert '.custom-rl' in toml
+        assert ".custom-rl" in toml
         assert 'releaseledger_dir = ".custom-rl"' in toml
 
     def test_config_set_external_dir_with_flag(self, tmp_path: Path) -> None:
         """config set --external-dir with an external relative dir writes the policy."""
         _init_project(tmp_path)
         result = _run(
-            tmp_path, "config", "set", "releaseledger_dir",
-            "../ext-rl", "--external-dir",
+            tmp_path,
+            "config",
+            "set",
+            "releaseledger_dir",
+            "../ext-rl",
+            "--external-dir",
         )
         assert result.exit_code == 0, result.stdout
         toml = (tmp_path / ".releaseledger.toml").read_text()
@@ -1161,8 +1343,12 @@ class TestPhase10ConfigCommands:
         )
 
         result = _run(
-            tmp_path, "config", "set", "releaseledger_dir",
-            "../ext-rl", "--external-dir",
+            tmp_path,
+            "config",
+            "set",
+            "releaseledger_dir",
+            "../ext-rl",
+            "--external-dir",
         )
 
         assert result.exit_code == 0, _human_error(result)
@@ -1175,8 +1361,11 @@ class TestPhase10ConfigCommands:
         _init_project(tmp_path)
         payload = _json(
             _jrun(
-                tmp_path, "config", "set",
-                "releaseledger_dir", ".custom-rl",
+                tmp_path,
+                "config",
+                "set",
+                "releaseledger_dir",
+                ".custom-rl",
             )
         )
         assert payload["ok"] is True
@@ -1188,9 +1377,7 @@ class TestPhase10ConfigCommands:
     def test_config_set_rejects_unknown_key(self, tmp_path: Path) -> None:
         """Only releaseledger_dir is supported; other keys are rejected."""
         _init_project(tmp_path)
-        result = _run(
-            tmp_path, "config", "set", "bogus_key", "value"
-        )
+        result = _run(tmp_path, "config", "set", "bogus_key", "value")
         assert result.exit_code != 0
         assert "unsupported" in _human_error(result).lower()
 
@@ -1200,12 +1387,12 @@ class TestPhase10ConfigCommands:
         _run(tmp_path, "config", "set", "releaseledger_dir", ".custom-rl")
         toml_after = (tmp_path / ".releaseledger.toml").read_text()
         # The releaseledger_dir line changed.
-        assert '.custom-rl' in toml_after
+        assert ".custom-rl" in toml_after
         # Other config preserved.
-        assert 'config_version = 1' in toml_after
-        assert '[ledger]' in toml_after
-        assert '[release]' in toml_after
-        assert '[changelog]' in toml_after
+        assert "config_version = 1" in toml_after
+        assert "[ledger]" in toml_after
+        assert "[release]" in toml_after
+        assert "[changelog]" in toml_after
 
 
 # ---------------------------------------------------------------------------
@@ -1219,15 +1406,29 @@ class TestPhase11EntrySources:
         _init_project(tmp_path)
         _run(tmp_path, "release", "create", "1.0.0")
         result = _run(
-            tmp_path, "entry", "add", "1.0.0",
-            "--kind", "added", "--summary", "Add X",
-            "--source", "taskledger:task-0001",
+            tmp_path,
+            "entry",
+            "add",
+            "1.0.0",
+            "--kind",
+            "added",
+            "--summary",
+            "Add X",
+            "--source",
+            "taskledger:task-0001",
         )
         assert result.exit_code == 0, result.stdout
         import ledgercore
+
         entry_path = (
-            tmp_path / ".releaseledger" / "ledgers" / "main"
-            / "releases" / "1.0.0" / "entries" / "entry-0001.md"
+            tmp_path
+            / ".releaseledger"
+            / "ledgers"
+            / "main"
+            / "releases"
+            / "1.0.0"
+            / "entries"
+            / "entry-0001.md"
         )
         meta, _ = ledgercore.read_front_matter_document(entry_path)
         assert "sources" in meta
@@ -1238,16 +1439,31 @@ class TestPhase11EntrySources:
         _init_project(tmp_path)
         _run(tmp_path, "release", "create", "1.0.0")
         result = _run(
-            tmp_path, "entry", "add", "1.0.0",
-            "--kind", "added", "--summary", "Add X",
-            "--source", "taskledger:task-0001",
-            "--source", "github:pr-42",
+            tmp_path,
+            "entry",
+            "add",
+            "1.0.0",
+            "--kind",
+            "added",
+            "--summary",
+            "Add X",
+            "--source",
+            "taskledger:task-0001",
+            "--source",
+            "github:pr-42",
         )
         assert result.exit_code == 0, result.stdout
         import ledgercore
+
         entry_path = (
-            tmp_path / ".releaseledger" / "ledgers" / "main"
-            / "releases" / "1.0.0" / "entries" / "entry-0001.md"
+            tmp_path
+            / ".releaseledger"
+            / "ledgers"
+            / "main"
+            / "releases"
+            / "1.0.0"
+            / "entries"
+            / "entry-0001.md"
         )
         meta, _ = ledgercore.read_front_matter_document(entry_path)
         assert meta["sources"] == ["taskledger:task-0001", "github:pr-42"]
@@ -1257,9 +1473,16 @@ class TestPhase11EntrySources:
         _init_project(tmp_path)
         _run(tmp_path, "release", "create", "1.0.0")
         _run(
-            tmp_path, "entry", "add", "1.0.0",
-            "--kind", "added", "--summary", "Add X",
-            "--source", "taskledger:task-0001",
+            tmp_path,
+            "entry",
+            "add",
+            "1.0.0",
+            "--kind",
+            "added",
+            "--summary",
+            "Add X",
+            "--source",
+            "taskledger:task-0001",
         )
         result = _run(tmp_path, "changelog", "1.0.0", "--format", "json")
         payload = json.loads(result.stdout)
@@ -1272,8 +1495,14 @@ class TestPhase11EntrySources:
         _init_project(tmp_path)
         _run(tmp_path, "release", "create", "1.0.0")
         _run(
-            tmp_path, "entry", "add", "1.0.0",
-            "--kind", "added", "--summary", "Legacy entry",
+            tmp_path,
+            "entry",
+            "add",
+            "1.0.0",
+            "--kind",
+            "added",
+            "--summary",
+            "Legacy entry",
         )
         # Verify sources is empty in the payload.
         result = _run(tmp_path, "changelog", "1.0.0", "--format", "json")
@@ -1286,9 +1515,16 @@ class TestPhase11EntrySources:
         _init_project(tmp_path)
         _run(tmp_path, "release", "create", "1.0.0")
         _run(
-            tmp_path, "entry", "add", "1.0.0",
-            "--kind", "added", "--summary", "With source",
-            "--source", "taskledger:task-0001",
+            tmp_path,
+            "entry",
+            "add",
+            "1.0.0",
+            "--kind",
+            "added",
+            "--summary",
+            "With source",
+            "--source",
+            "taskledger:task-0001",
         )
         payload = _json(_jrun(tmp_path, "entry", "list", "1.0.0"))
         entries = payload["result"]["entries"]

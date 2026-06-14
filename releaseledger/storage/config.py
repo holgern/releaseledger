@@ -388,39 +388,41 @@ def render_default_releaseledger_toml(
     ]
     if policy != DEFAULT_RELEASELEDGER_DIR_POLICY:
         lines.append(f'releaseledger_dir_policy = "{policy}"')
-    lines.extend([
-        "",
-        "# Branch-scoped release state. This block is safe to commit.",
-        f'ledger_ref = "{ledger_ref}"',
-        'ledger_parent_ref = ""',
-        'ledger_next_entry_number = 1',
-        'ledger_branch_guard = "off"',
-        "",
-        "# Cross-ledger identity. Local record IDs stay "
-        "unchanged; global refs are derived.",
-        '[ledger]',
-        f'code = "{DEFAULT_LEDGER_CODE}"',
-        f'name = "{project_name}"',
-        "",
-        "# Release defaults.",
-        '[release]',
-        f'default_changelog = "{DEFAULT_CHANGELOG}"',
-        f'default_status = "{DEFAULT_RELEASE_STATUS}"',
-        'allow_dirty_worktree = true',
-        "",
-        "# Changelog build defaults.",
-        '[changelog]',
-        f'output = "{DEFAULT_CHANGELOG}"',
-        'trim = true',
-        'render_always = false',
-        'header = ""',
-        # The body template holds literal Jinja2 braces; keep it out of any
-        # f-string so braces are never doubled. A newline immediately after
-        # the opening triple quote is trimmed by the TOML parser on read-back.
-        f'body = """\n{DEFAULT_CHANGELOG_TEMPLATE_BODY}"""',
-        f'footer = "{DEFAULT_CHANGELOG_FOOTER}"',
-        'postprocessors = []',
-    ])
+    lines.extend(
+        [
+            "",
+            "# Branch-scoped release state. This block is safe to commit.",
+            f'ledger_ref = "{ledger_ref}"',
+            'ledger_parent_ref = ""',
+            "ledger_next_entry_number = 1",
+            'ledger_branch_guard = "off"',
+            "",
+            "# Cross-ledger identity. Local record IDs stay "
+            "unchanged; global refs are derived.",
+            "[ledger]",
+            f'code = "{DEFAULT_LEDGER_CODE}"',
+            f'name = "{project_name}"',
+            "",
+            "# Release defaults.",
+            "[release]",
+            f'default_changelog = "{DEFAULT_CHANGELOG}"',
+            f'default_status = "{DEFAULT_RELEASE_STATUS}"',
+            "allow_dirty_worktree = true",
+            "",
+            "# Changelog build defaults.",
+            "[changelog]",
+            f'output = "{DEFAULT_CHANGELOG}"',
+            "trim = true",
+            "render_always = false",
+            'header = ""',
+            # The body template holds literal Jinja2 braces; keep it out of any
+            # f-string so braces are never doubled. A newline immediately after
+            # the opening triple quote is trimmed by the TOML parser on read-back.
+            f'body = """\n{DEFAULT_CHANGELOG_TEMPLATE_BODY}"""',
+            f'footer = "{DEFAULT_CHANGELOG_FOOTER}"',
+            "postprocessors = []",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 

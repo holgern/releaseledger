@@ -110,7 +110,6 @@ def _paths(ctx: typer.Context) -> ProjectPaths:
     return require_project(state.cwd)
 
 
-
 @app.command("init")
 def init_command(
     ctx: typer.Context,
@@ -152,10 +151,7 @@ def init_command(
             display_str = str(display)
         except ValueError:
             display_str = str(rel_dir)
-        human = (
-            f"initialized releaseledger in {display_str}\n"
-            f"wrote .releaseledger.toml"
-        )
+        human = f"initialized releaseledger in {display_str}\nwrote .releaseledger.toml"
         return result, [], human
 
     run_command(
@@ -308,9 +304,7 @@ def release_update_command(
     previous_version: Annotated[str | None, typer.Option("--previous")] = None,
     changelog_file: Annotated[str | None, typer.Option("--changelog-file")] = None,
     boundary_ref: Annotated[str | None, typer.Option("--boundary-ref")] = None,
-    source_refs: Annotated[
-        list[str] | None, typer.Option("--source-ref")
-    ] = None,
+    source_refs: Annotated[list[str] | None, typer.Option("--source-ref")] = None,
     source_count: Annotated[int | None, typer.Option("--source-count")] = None,
 ) -> None:
     """Update release metadata."""
@@ -475,9 +469,7 @@ def entry_add_command(
     ] = None,
     sources: Annotated[
         list[str] | None,
-        typer.Option(
-            "--source", help="Provenance source reference (repeatable)."
-        ),
+        typer.Option("--source", help="Provenance source reference (repeatable)."),
     ] = None,
     status: Annotated[
         str, typer.Option("--status", help="draft|accepted|rejected.")
@@ -598,9 +590,7 @@ def entry_update_command(
             status=status,
             audience=audience,
             scopes=tuple(scopes) if scopes is not None else None,
-            source_refs=(
-                tuple(source_refs) if source_refs is not None else None
-            ),
+            source_refs=(tuple(source_refs) if source_refs is not None else None),
             paths=tuple(paths) if paths is not None else None,
             issues=tuple(issues) if issues is not None else None,
             prs=tuple(prs) if prs is not None else None,
@@ -1072,18 +1062,14 @@ def config_set_command(
             code="USAGE_ERROR",
             exit_code=2,
         )
-        emit_error(
-            command="config.set", error=err, json_output=state.json_output
-        )
+        emit_error(command="config.set", error=err, json_output=state.json_output)
         raise typer.Exit(launch_error_exit_code(err)) from err
 
     def produce() -> CommandResult:
         result = config_set_releaseledger_dir(
             state.cwd, value, external_dir=external_dir
         )
-        human = (
-            f"set releaseledger_dir: {result['before']} -> {result['after']}"
-        )
+        human = f"set releaseledger_dir: {result['before']} -> {result['after']}"
         return result, [], human
 
     run_command(
