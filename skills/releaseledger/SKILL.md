@@ -54,6 +54,7 @@ releaseledger entry lint VERSION --strict
 releaseledger entry prompt VERSION --source-ref REF --context-file FILE
 releaseledger changelog VERSION --format markdown|json
 releaseledger build VERSION --dry-run
+releaseledger review VERSION [--strict]
 releaseledger build VERSION --target-file CHANGELOG.md
 releaseledger storage where
 releaseledger config show
@@ -228,6 +229,39 @@ Use this when the user asks to build, generate, or update `CHANGELOG.md`.
    explicitly draft output and preserve the draft-quality warning.
 7. Do not use `--allow-empty` unless an empty release section is intentional.
 
+## Release review protocol
+
+Use this to answer "what did I already add for this release?" before adding
+new entries or building the changelog. `releaseledger review VERSION` is
+read-only: it never writes `CHANGELOG.md` and never mutates release state.
+
+```bash
+releaseledger review VERSION
+releaseledger --json review VERSION
+releaseledger review VERSION --include-status accepted --include-status draft
+releaseledger review VERSION --strict --target-file CHANGELOG.md
+```
+
+Rules:
+
+1. Run review before adding an entry. If the same `source_ref` is already
+   covered by an accepted entry, update the existing entry instead of adding a
+   duplicate. Search by `source_refs`, then `prs`/`issues`, then `sources`,
+   then a kind+summary+paths fingerprint as a last resort.
+2. Each expected ref (`release.source_refs` plus `boundary_ref`) is classified
+   as `covered`, `draft_only`, `rejected_only`, `internal_only`, or `missing`.
+   Treat `draft_only` as pending review and `rejected_only` as possibly
+   intentional; confirm before re-adding.
+3. Orphan accepted entries (no `source_refs`, `issues`, `prs`, or `sources`)
+   should get provenance or be removed.
+4. `--strict` exits non-zero when the release is not OK. It mirrors `build
+   --strict`, so it can fail on uncovered refs, lint errors, a missing release
+   date in Keep a Changelog mode, or other build blockers. Review alone never
+   writes the changelog.
+5. Do not infer "already added" from a changed file path or a Git hash alone.
+   Treat Git hashes as optional evidence in entry `sources`, never in
+   `source_refs`.
+
 ## Templating protocol
 
 Releaseledger changelog templates are configured in `.releaseledger.toml` under `[changelog]`.
@@ -311,6 +345,7 @@ from releaseledger.api.entries import (
     lint_release_entries,
     build_entry_prompt,
 )
+from releaseledger.api.review import build_release_review
 from releaseledger.api.config import load_project_locator, render_default_releaseledger_toml
 ```
 

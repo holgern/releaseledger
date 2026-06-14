@@ -193,6 +193,10 @@ releaseledger build VERSION [--target-file PATH]
                             [--strict]
                             [--allow-empty]
 
+releaseledger review VERSION [--include-internal]
+                       [--include-status STATUS]...
+                       [--target-file PATH] [--strict]
+
 releaseledger changelog-section remove-section VERSION --target-file PATH
                                               [--ignore-missing] [--dry-run]
 releaseledger changelog-section rename-section OLD_VERSION NEW_VERSION
@@ -289,6 +293,32 @@ postprocessors = [
   { pattern = "releaseledger", replace = "Releaseledger" },
 ]
 ```
+
+## Release review
+
+`releaseledger review VERSION` is a read-only coverage report that combines
+release state, entry coverage, orphan detection, entry lint, and a strict
+changelog dry-run into one deterministic report. Use it to answer "what did I
+already add for this release?" without stitching together `release show`,
+`entry list`, `entry lint`, `changelog`, and `build --dry-run`.
+
+```bash
+releaseledger review 0.5.0
+releaseledger --json review 0.5.0
+releaseledger review 0.5.0 --include-status accepted --include-status draft
+releaseledger review 0.5.0 --strict --target-file CHANGELOG.md
+```
+
+Each expected source ref (`release.source_refs` plus `boundary_ref`) is
+classified as `covered`, `draft_only`, `rejected_only`, `internal_only`, or
+`missing`. Accepted entries with no provenance (empty `source_refs`, `issues`,
+`prs`, and `sources`) are reported as orphans. Git hashes remain optional
+evidence in entry `sources`; `source_refs` plus entry `status` are the
+canonical change identity.
+
+> Before adding a new entry, run `releaseledger review VERSION`. If the same
+> `source_ref` is already covered by an accepted entry, update the existing
+> entry instead of adding a duplicate.
 
 ## Correcting canceled or misnumbered releases
 

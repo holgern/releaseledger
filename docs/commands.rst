@@ -142,6 +142,22 @@ Changelog commands
                                [--strict]
                                [--allow-empty]
 
+Review commands
+----------------
+
+.. code-block:: text
+
+   releaseledger review VERSION [--include-internal]
+                           [--include-status STATUS]...
+                           [--target-file PATH] [--strict]
+
+Read-only coverage report. It combines release state, entry coverage, orphan
+detection, entry lint, and a strict changelog dry-run into one deterministic
+report so agents and humans do not need to run ``release show``,
+``entry list``, ``entry lint``, ``changelog``, and ``build --dry-run``
+separately. ``--strict`` exits non-zero when the release is not OK (uncovered
+source refs, lint errors, or a changelog build that would fail).
+
 Changelog section correction commands
 -------------------------------------
 

@@ -78,6 +78,32 @@ Strict builds
 entries unless ``--allow-empty`` is supplied, and release source refs that are
 not covered by included entries.
 
+Release review
+---------------
+
+``releaseledger review VERSION`` is a read-only coverage report. It combines
+release state, entry coverage, orphan detection, entry lint, and a strict
+changelog dry-run into one deterministic report so agents and humans do not
+need to run ``release show``, ``entry list``, ``entry lint``, ``changelog``,
+and ``build --dry-run`` separately.
+
+Each expected source ref (``release.source_refs`` plus ``boundary_ref``) is
+classified as ``covered``, ``draft_only``, ``rejected_only``,
+``internal_only``, or ``missing``. Accepted entries with no provenance
+(empty ``source_refs``, ``issues``, ``prs``, and ``sources``) are reported as
+orphans. ``--strict`` exits non-zero when the release is not OK.
+
+Run review before adding a new entry. If the same ``source_ref`` is already
+covered by an accepted entry, update the existing entry instead of adding a
+duplicate.
+
+.. code-block:: text
+
+   releaseledger review 0.5.0
+   releaseledger --json review 0.5.0
+   releaseledger review 0.5.0 --strict --target-file CHANGELOG.md
+
+
 Section correction
 ------------------
 

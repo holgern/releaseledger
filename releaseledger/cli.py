@@ -61,6 +61,7 @@ from releaseledger.services.releases import (
     tag_release,
     update_release,
 )
+from releaseledger.services.review import build_release_review
 from releaseledger.storage.paths import (
     ProjectPaths,
     initialize_project,
@@ -1165,6 +1166,168 @@ def changelog_command(
             typer.echo(f"wrote {out_path}")
         return
     typer.echo(text)
+
+
+def _format_coverage_row(row: dict[str, object]) -> str:
+    ref = str(row.get("source_ref", ""))
+    label = str(row.get("status", ""))
+    accepted = row.get("accepted_entry_ids", [])
+    entries_text = ""
+    if isinstance(accepted, list) and accepted:
+        entries_text = " -> " + ", ".join(str(e) for e in accepted)
+    elif label in {"draft_only", "rejected_only", "internal_only"}:
+        ids = row.get("entry_ids", [])
+        if isinstance(ids, list) and ids:
+            entries_text = " -> " + ", ".join(str(e) for e in ids)
+    return f"  {label:<14} {ref}{entries_text}"
+
+
+@app.command("review")
+def review_command(
+    ctx: typer.Context,
+    version: Annotated[str, typer.Argument(help="Release version string.")],
+    include_internal: Annotated[
+        bool,
+        typer.Option(
+            "--include-internal",
+            help="Include internal entries in coverage and the dry-run build.",
+        ),
+    ] = False,
+    include_statuses: Annotated[
+        list[str] | None,
+        typer.Option("--include-status", help="Included entry statuses."),
+    ] = None,
+    target_file: Annotated[
+        Path | None,
+        typer.Option("--target-file", help="CHANGELOG target file for the dry-run."),
+    ] = None,
+    strict: Annotated[
+        bool,
+        typer.Option("--strict", help="Exit non-zero when the release is not OK."),
+    ] = False,
+) -> None:
+    """Review release coverage, orphans, lint, and a strict changelog dry-run."""
+    state = cli_state_from_context(ctx)
+    statuses = tuple(include_statuses) if include_statuses is not None else None
+    try:
+        result = build_release_review(
+            _paths(ctx).workspace_root,
+            version=version,
+            include_internal=include_internal,
+            include_statuses=statuses or ("accepted",),
+            target_file=target_file,
+            strict=strict,
+        )
+    except ReleaseledgerError as exc:
+        emit_error(command="review", error=exc, json_output=state.json_output)
+        raise typer.Exit(launch_error_exit_code(exc)) from exc
+
+    ok = bool(result.get("ok", False))
+    if state.json_output:
+        payload: dict[str, object] = {
+            "ok": ok,
+            "command": "review",
+            "result_type": "release_review",
+            "result": result,
+        }
+        typer.echo(render_json(payload))
+        if strict and not ok:
+            raise typer.Exit(2)
+        return
+    typer.echo(_render_review_human(version, result))
+    if strict and not ok:
+        raise typer.Exit(2)
+
+
+def _render_review_human(version: str, result: dict[str, object]) -> str:
+    release_block = result.get("release", {})
+    release_dict = release_block if isinstance(release_block, dict) else {}
+    lines = [f"RELEASE REVIEW {version}", ""]
+    lines.append("Release:")
+    lines.append(f"  status: {release_dict.get('status', '')}")
+    if release_dict.get("previous_version"):
+        lines.append(f"  previous_version: {release_dict['previous_version']}")
+    if release_dict.get("changelog_file"):
+        lines.append(f"  changelog_file: {release_dict['changelog_file']}")
+    source_refs = release_dict.get("source_refs", [])
+    if isinstance(source_refs, list) and source_refs:
+        lines.append("  source_refs: " + ", ".join(str(r) for r in source_refs))
+    if release_dict.get("boundary_ref"):
+        lines.append(f"  boundary_ref: {release_dict['boundary_ref']}")
+
+    coverage = result.get("coverage", [])
+    if isinstance(coverage, list):
+        lines.append("")
+        lines.append("Coverage:")
+        if coverage:
+            for row in coverage:
+                assert isinstance(row, dict)
+                lines.append(_format_coverage_row(row))
+        else:
+            lines.append("  (no expected source refs)")
+
+    counts = result.get("entry_counts", {})
+    if isinstance(counts, dict):
+        lines.append("")
+        lines.append("Entries:")
+        lines.append(f"  accepted: {counts.get('accepted', 0)}")
+        lines.append(f"  draft: {counts.get('draft', 0)}")
+        lines.append(f"  rejected: {counts.get('rejected', 0)}")
+        hidden = counts.get("internal", 0)
+        if hidden:
+            lines.append(f"  internal: {hidden}")
+
+    lint = result.get("lint", {})
+    lint_errors = 0
+    lint_warnings = 0
+    if isinstance(lint, dict):
+        lint_errors = int(lint.get("errors", 0))
+        lint_warnings = int(lint.get("warnings", 0))
+    lines.append("")
+    lines.append("Strict checks:")
+    checks = result.get("checks", {})
+    coverage_ok = checks.get("coverage_ok") if isinstance(checks, dict) else None
+    changelog_ok = checks.get("changelog_ok") if isinstance(checks, dict) else None
+    coverage_label = "OK" if coverage_ok else "FAIL"
+    if not coverage:
+        coverage_label = "OK"
+    changelog_block = result.get("changelog", {})
+    changelog_dict = changelog_block if isinstance(changelog_block, dict) else {}
+    changelog_status = "OK" if changelog_ok else "FAIL"
+    reason = changelog_dict.get("reason")
+    reason_text = f": {reason}" if reason else ""
+    lines.append(
+        f"  {coverage_label:<4} release source refs coverage"
+    )
+    lines.append(
+        f"  {'OK' if lint_errors == 0 else 'FAIL':<4} entry lint "
+        f"({lint_errors} error(s), {lint_warnings} warning(s))"
+    )
+    lines.append(
+        f"  {changelog_status:<4} changelog dry-run build{reason_text}"
+    )
+
+    orphans = result.get("orphan_entries", [])
+    if isinstance(orphans, list) and orphans:
+        lines.append("")
+        lines.append("Orphan entries:")
+        for orphan in orphans:
+            assert isinstance(orphan, dict)
+            lines.append(
+                f"  {orphan.get('entry_id')} "
+                f"{orphan.get('reason')}"
+            )
+
+    recommendations = result.get("recommendations", [])
+    if isinstance(recommendations, list) and recommendations:
+        lines.append("")
+        lines.append("Recommendations:")
+        for rec in recommendations:
+            lines.append(f"  - {rec}")
+
+    lines.append("")
+    lines.append(f"Result: {'OK' if result.get('ok') else 'FAIL'}")
+    return "\n".join(lines)
 
 
 @app.command("build")
