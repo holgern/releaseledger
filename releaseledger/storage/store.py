@@ -16,6 +16,8 @@ the config, mirroring the signatures in the implementation brief.
 from __future__ import annotations
 
 import re
+import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import ledgercore
@@ -28,6 +30,7 @@ from releaseledger.domain.entry import (
 from releaseledger.domain.release import (
     RELEASE_FRONT_MATTER_KEY_ORDER,
     ReleaseRecord,
+    parse_release_version_tuple,
     release_from_dict,
 )
 from releaseledger.errors import (
@@ -46,6 +49,8 @@ __all__ = [
     "rebuild_indexes",
     "release_dir",
     "release_markdown_path",
+    "rename_release_bundle",
+    "save_entries_for_release",
     "save_entry",
     "save_release",
     "validate_release_version",
@@ -204,7 +209,16 @@ def list_releases(workspace_root: Path) -> list[ReleaseRecord]:
 
 def _release_sort_key(record: ReleaseRecord) -> tuple[object, ...]:
     released_at = record.released_at or ""
-    return (released_at, record.created_at, record.version)
+    semver = parse_release_version_tuple(record.version)
+    # Parseable semantic versions sort by (0, major, minor, patch) so same-date
+    # releases order naturally regardless of created_at (which previously let a
+    # later-created v0.1.0 sort after v0.1.1). Non-parseable versions sort after
+    # real semver via flag 1 and then by raw string.
+    if semver is not None:
+        semver_component: tuple[object, ...] = (0, *semver)
+    else:
+        semver_component = (1, 0, 0, 0)
+    return (released_at, semver_component, record.created_at, record.version)
 
 
 def next_entry_id(workspace_root: Path, release_version: str) -> str:
@@ -320,3 +334,75 @@ def rebuild_indexes(workspace_root: Path) -> None:
     ledgercore.ensure_dir(paths.indexes_dir)
     ledgercore.write_json(paths.releases_index_path, release_rows)
     ledgercore.write_json(paths.entries_index_path, entry_rows)
+
+
+def save_entries_for_release(
+    workspace_root: Path,
+    release_version: str,
+    entries: list[ReleaseEntryRecord],
+) -> None:
+    """Replace the entries for ``release_version`` with ``entries``.
+
+    Writes each entry with its ``release_version`` rewritten to the supplied
+    version and removes any stale entry files left from the prior bundle. Used
+    by :func:`rename_release_bundle` to move entries across versions while
+    preserving entry ids and order.
+    """
+    paths = _resolve(workspace_root)
+    validate_release_version(release_version)
+    entries_dir = _entries_dir(paths, release_version)
+    ledgercore.ensure_dir(entries_dir)
+    wanted = {f"{entry.entry_id}.md" for entry in entries}
+    for child in entries_dir.glob("entry-*.md"):
+        if child.name not in wanted:
+            try:
+                child.unlink()
+            except OSError:
+                # Best-effort cleanup; stale files are overwritten below.
+                pass
+    for entry in entries:
+        rewritten = replace(entry, release_version=release_version)
+        save_entry(workspace_root, rewritten)
+
+
+def rename_release_bundle(
+    workspace_root: Path,
+    old_version: str,
+    new_record: ReleaseRecord,
+) -> ReleaseRecord:
+    """Move the release bundle from ``old_version`` to ``new_record.version``.
+
+    Persists ``new_record`` (with its rewritten front matter) under the new
+    version directory, rewrites every entry's ``release_version`` front matter
+    to the new version (preserving entry ids and order), and removes the old
+    bundle directory. Returns the persisted ``new_record``.
+    """
+    paths = _resolve(workspace_root)
+    validate_release_version(old_version)
+    validate_release_version(new_record.version)
+    old_bundle = release_dir(paths, old_version)
+    if not old_bundle.is_dir():
+        raise LaunchError(
+            f"Release not found: {old_version}",
+            code=CODE_NOT_FOUND,
+            exit_code=2,
+        )
+    if old_version == new_record.version:
+        save_release(workspace_root, new_record, overwrite=True)
+        return new_record
+    # Load entries before touching the filesystem so a rewrite failure leaves
+    # the original bundle intact.
+    entries = load_entries(workspace_root, old_version)
+    ensure_release_bundle(paths, new_record.version)
+    save_release(workspace_root, new_record, overwrite=True)
+    save_entries_for_release(workspace_root, new_record.version, entries)
+    # Remove the old bundle entirely (release.md + entries + any leftovers).
+    try:
+        shutil.rmtree(old_bundle)
+    except OSError as exc:
+        raise LaunchError(
+            f"Failed to remove old release bundle {old_version}: {exc}",
+            code="RELEASELEDGER_ERROR",
+            exit_code=1,
+        ) from exc
+    return new_record

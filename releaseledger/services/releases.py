@@ -11,22 +11,34 @@ import datetime
 import re
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import ledgercore
 
 from releaseledger.domain.event import (
+    EVENT_RELEASE_CANCELED,
+    EVENT_RELEASE_CHAIN_REPAIRED,
     EVENT_RELEASE_CREATED,
     EVENT_RELEASE_FINALIZED,
+    EVENT_RELEASE_RENAMED,
     EVENT_RELEASE_TAGGED,
     EVENT_RELEASE_UPDATED,
 )
-from releaseledger.domain.release import ReleaseRecord
+from releaseledger.domain.release import (
+    ReleaseRecord,
+    parse_release_version_tuple,
+)
 from releaseledger.domain.states import RELEASE_STATUSES
 from releaseledger.errors import (
     CODE_CONFLICT,
     CODE_USAGE_ERROR,
     CODE_VALIDATION_ERROR,
     LaunchError,
+)
+from releaseledger.services.changelog_build import (
+    find_release_section,
+    remove_release_section,
+    rename_release_section,
 )
 from releaseledger.services.events import append_event
 from releaseledger.storage.paths import resolve_project_paths
@@ -36,18 +48,30 @@ from releaseledger.storage.store import (
     load_release,
     rebuild_indexes,
     release_markdown_path,
+    rename_release_bundle,
     save_release,
     validate_release_version,
 )
 
 __all__ = [
+    "cancel_release",
+    "check_release_chain",
     "create_release",
     "finalize_release",
     "list_release_records",
+    "rename_release",
+    "repair_release_chain",
     "show_release",
     "tag_release",
     "update_release",
 ]
+
+# Sentinel for clearable optional fields on ``update_release``: distinguishes
+# "not supplied" (``UNSET``) from "explicitly clear to None".
+UNSET: object = object()
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_FINALIZABLE_STATUSES = frozenset({"planned", "draft", "candidate"})
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _FINALIZABLE_STATUSES = frozenset({"planned", "draft", "candidate"})
@@ -67,12 +91,90 @@ def _validate_date(value: str, field_name: str) -> str:
     return value
 
 
-def _infer_previous_version(workspace_root: Path) -> str | None:
-    """Return the latest released release version, or None if there is none."""
+def _predecessor_key(
+    version: str | None,
+    released_at: str | None,
+) -> tuple[str, tuple[int, int, int] | None, str]:
+    """Comparable key for ordering releases as potential predecessors.
+
+    Order: released_at (date string) ascending, then parseable semantic
+    version ascending, then the raw version string. Non-parseable versions
+    sort as ``None`` so they compare conservatively rather than misleadingly.
+    """
+    return (
+        released_at or "",
+        parse_release_version_tuple(version or ""),
+        version or "",
+    )
+
+
+def _is_strictly_newer(
+    candidate_key: tuple[str, tuple[int, int, int] | None, str],
+    reference_key: tuple[str, tuple[int, int, int] | None, str],
+) -> bool:
+    """Return True when ``candidate_key`` orders strictly after ``reference_key``.
+
+    Comparison is conservative when semantic versions are unavailable: a
+    ``None`` semver tuple compares as *not* newer than a real tuple so a
+    non-standard version is never treated as a future predecessor of a real
+    semantic version.
+    """
+    cand_date, cand_semver, cand_ver = candidate_key
+    ref_date, ref_semver, ref_ver = reference_key
+    if cand_date != ref_date:
+        return cand_date > ref_date
+    if cand_semver is not None and ref_semver is not None:
+        if cand_semver != ref_semver:
+            return cand_semver > ref_semver
+    elif cand_semver is None or ref_semver is None:
+        # Semver unavailable on at least one side: do not treat as newer.
+        return False
+    return cand_ver > ref_ver
+
+
+def _infer_previous_version(
+    workspace_root: Path,
+    *,
+    candidate_version: str | None = None,
+    candidate_released_at: str | None = None,
+) -> tuple[str | None, list[str]]:
+    """Infer the previous released release version for a new/edited release.
+
+    Returns ``(previous_version_or_None, warnings)``. Excludes canceled
+    releases and never infers a predecessor that is strictly newer than the
+    candidate, so historical backfills (e.g. adding ``v0.1.0`` after
+    ``v0.4.3``) no longer infer a future predecessor. Emits a warning when
+    the ordering is ambiguous (same date, non-parseable versions).
+    """
+    warnings: list[str] = []
     released = [r for r in list_releases(workspace_root) if r.status == "released"]
     if not released:
-        return None
-    return released[-1].version
+        return None, warnings
+    reference_key = _predecessor_key(candidate_version, candidate_released_at)
+    eligible: list[ReleaseRecord] = []
+    for record in released:
+        if candidate_version is not None and record.version == candidate_version:
+            continue  # never infer the candidate as its own predecessor
+        record_key = _predecessor_key(record.version, record.released_at)
+        if _is_strictly_newer(record_key, reference_key):
+            continue  # record is a future release; cannot be a predecessor
+        eligible.append(record)
+    if not eligible:
+        return None, warnings
+    eligible.sort(key=lambda r: _predecessor_key(r.version, r.released_at))
+    chosen = eligible[-1]
+    # Ambiguity: top eligible releases share a date but lack semver ordering.
+    if len(eligible) > 1:
+        top_key = _predecessor_key(chosen.version, chosen.released_at)
+        runner_up_key = _predecessor_key(eligible[-2].version, eligible[-2].released_at)
+        if top_key[0] == runner_up_key[0] and (
+            top_key[1] is None or runner_up_key[1] is None
+        ):
+            warnings.append(
+                "Previous-version inference is ambiguous for same-date releases;"
+                " pass --previous to set it explicitly."
+            )
+    return chosen.version, warnings
 
 
 def _validate_source_metadata(
@@ -128,6 +230,7 @@ def _persist_new_release(
     record: ReleaseRecord,
     *,
     event_name: str,
+    warnings: list[str] | None = None,
 ) -> dict[str, object]:
     paths = resolve_project_paths(workspace_root)
     if release_markdown_path(paths, record.version).is_file():
@@ -145,7 +248,10 @@ def _persist_new_release(
         data={"status": record.status},
     )
     rebuild_indexes(workspace_root)
-    return _release_payload(workspace_root, record, event.event_id)
+    payload = _release_payload(workspace_root, record, event.event_id)
+    if warnings:
+        payload["warnings"] = list(warnings)
+    return payload
 
 
 def create_release(
@@ -172,8 +278,13 @@ def create_release(
         )
     if released_at is not None:
         _validate_date(released_at, "--released-at")
+    warnings: list[str] = []
     if previous_version is None:
-        previous_version = _infer_previous_version(workspace_root)
+        previous_version, warnings = _infer_previous_version(
+            workspace_root,
+            candidate_version=version,
+            candidate_released_at=released_at,
+        )
     boundary_ref, source_refs, source_count = _validate_source_metadata(
         boundary_ref=boundary_ref,
         source_refs=source_refs,
@@ -192,7 +303,10 @@ def create_release(
         source_count=source_count,
     )
     return _persist_new_release(
-        workspace_root, record, event_name=EVENT_RELEASE_CREATED
+        workspace_root,
+        record,
+        event_name=EVENT_RELEASE_CREATED,
+        warnings=warnings,
     )
 
 
@@ -214,8 +328,13 @@ def tag_release(
         _validate_date(released_at, "--released-at")
     else:
         released_at = _today()
+    warnings: list[str] = []
     if previous_version is None:
-        previous_version = _infer_previous_version(workspace_root)
+        previous_version, warnings = _infer_previous_version(
+            workspace_root,
+            candidate_version=version,
+            candidate_released_at=released_at,
+        )
     boundary_ref, source_refs, source_count = _validate_source_metadata(
         boundary_ref=boundary_ref,
         source_refs=source_refs,
@@ -233,7 +352,12 @@ def tag_release(
         source_refs=source_refs,
         source_count=source_count,
     )
-    return _persist_new_release(workspace_root, record, event_name=EVENT_RELEASE_TAGGED)
+    return _persist_new_release(
+        workspace_root,
+        record,
+        event_name=EVENT_RELEASE_TAGGED,
+        warnings=warnings,
+    )
 
 
 def finalize_release(
@@ -274,6 +398,32 @@ def finalize_release(
     return _release_payload(workspace_root, updated, event.event_id)
 
 
+def _resolve_optional_field(
+    field_name: str,
+    supplied: object,
+    existing: object,
+    *,
+    clear: bool = False,
+) -> Any:
+    """Resolve a clearable optional field supplied through the update API.
+
+    ``UNSET`` means "not supplied" (keep existing), ``clear=True" means clear
+    to ``None`` (or empty for collections), and any other value is the new value.
+    Supplying both a new value and ``clear=True`` is a usage error.
+    """
+    if clear:
+        if supplied is not UNSET:
+            raise LaunchError(
+                f"--{field_name} conflicts with its clear flag; supply one.",
+                code=CODE_USAGE_ERROR,
+                exit_code=2,
+            )
+        return None
+    if supplied is UNSET:
+        return existing
+    return supplied
+
+
 def update_release(
     workspace_root: Path,
     *,
@@ -281,13 +431,28 @@ def update_release(
     title: str | None = None,
     status: str | None = None,
     note: str | None = None,
-    previous_version: str | None = None,
-    changelog_file: str | None = None,
-    boundary_ref: str | None = None,
-    source_refs: tuple[str, ...] | None = None,
-    source_count: int | None = None,
+    previous_version: str | None = UNSET,
+    changelog_file: str | None = UNSET,
+    boundary_ref: str | None = UNSET,
+    source_refs: tuple[str, ...] = UNSET,  # type: ignore[assignment]
+    source_count: int | None = UNSET,
+    released_at: str | None = UNSET,
+    clear_previous: bool = False,
+    clear_changelog_file: bool = False,
+    clear_boundary_ref: bool = False,
+    clear_source_refs: bool = False,
+    clear_source_count: bool = False,
+    clear_released_at: bool = False,
+    force: bool = False,
 ) -> dict[str, object]:
-    """Update explicitly supplied release metadata."""
+    """Update explicitly supplied release metadata.
+
+    Clearable optional fields use the ``UNSET`` sentinel to distinguish
+    "not supplied" from "explicitly clear to None". Each ``--clear-*`` flag
+    conflicts with its matching setter option. Clearing ``released_at`` on a
+    release whose effective status is ``released`` is rejected unless
+    ``force=True``.
+    """
     existing = load_release(workspace_root, version)
     if status is not None and status not in RELEASE_STATUSES:
         raise LaunchError(
@@ -295,27 +460,72 @@ def update_release(
             code=CODE_VALIDATION_ERROR,
             exit_code=2,
         )
-    boundary, refs, count = _validate_source_metadata(
-        boundary_ref=(
-            boundary_ref if boundary_ref is not None else existing.boundary_ref
-        ),
-        source_refs=source_refs if source_refs is not None else existing.source_refs,
-        source_count=(
-            source_count if source_count is not None else existing.source_count
-        ),
+    effective_status = status if status is not None else existing.status
+    if clear_released_at and effective_status == "released" and not force:
+        raise LaunchError(
+            "Clearing released_at on a released release requires --force.",
+            code=CODE_USAGE_ERROR,
+            exit_code=2,
+        )
+    # Resolve each clearable optional field against the UNSET sentinel.
+    resolved_previous = _resolve_optional_field(
+        "previous",
+        previous_version,
+        existing.previous_version,
+        clear=clear_previous,
     )
+    if resolved_previous is not None:
+        resolved_previous = validate_release_version(str(resolved_previous))
+    resolved_changelog_file = _resolve_optional_field(
+        "changelog-file",
+        changelog_file,
+        existing.changelog_file,
+        clear=clear_changelog_file,
+    )
+    resolved_boundary_raw = _resolve_optional_field(
+        "boundary-ref",
+        boundary_ref,
+        existing.boundary_ref,
+        clear=clear_boundary_ref,
+    )
+    resolved_source_refs_raw = _resolve_optional_field(
+        "source-refs",
+        source_refs,
+        existing.source_refs,
+        clear=clear_source_refs,
+    )
+    resolved_source_count = _resolve_optional_field(
+        "source-count",
+        source_count,
+        existing.source_count,
+        clear=clear_source_count,
+    )
+    resolved_released_at = _resolve_optional_field(
+        "released-at",
+        released_at,
+        existing.released_at,
+        clear=clear_released_at,
+    )
+    if resolved_released_at is not None:
+        _validate_date(str(resolved_released_at), "--released-at")
+    boundary, refs, count = _validate_source_metadata(
+        boundary_ref=resolved_boundary_raw,
+        source_refs=(
+            resolved_source_refs_raw
+            if isinstance(resolved_source_refs_raw, tuple)
+            else existing.source_refs
+        ),
+        source_count=resolved_source_count,
+    )
+    if clear_source_refs:
+        refs = ()
     values: dict[str, object] = {
         "title": title if title is not None else existing.title,
         "status": status if status is not None else existing.status,
         "note": note if note is not None else existing.note,
-        "previous_version": (
-            previous_version
-            if previous_version is not None
-            else existing.previous_version
-        ),
-        "changelog_file": (
-            changelog_file if changelog_file is not None else existing.changelog_file
-        ),
+        "previous_version": resolved_previous,
+        "changelog_file": resolved_changelog_file,
+        "released_at": resolved_released_at,
         "boundary_ref": boundary,
         "source_refs": refs,
         "source_count": count,
@@ -331,14 +541,9 @@ def update_release(
         title=title if title is not None else existing.title,
         status=status if status is not None else existing.status,
         note=note if note is not None else existing.note,
-        previous_version=(
-            previous_version
-            if previous_version is not None
-            else existing.previous_version
-        ),
-        changelog_file=(
-            changelog_file if changelog_file is not None else existing.changelog_file
-        ),
+        previous_version=resolved_previous,
+        changelog_file=resolved_changelog_file,
+        released_at=resolved_released_at,
         boundary_ref=boundary,
         source_refs=refs,
         source_count=count,
@@ -370,4 +575,480 @@ def show_release(workspace_root: Path, version: str) -> dict[str, object]:
     payload = _release_payload(workspace_root, record)
     payload["entries"] = entries
     payload["entry_count"] = len(entries)
+    return payload
+
+
+def _resolve_changelog_target(workspace_root: Path, target_file: Path) -> Path:
+    path = Path(target_file)
+    return path if path.is_absolute() else (workspace_root / path)
+
+
+def _rewrite_changelog_section(
+    target_file: Path,
+    old_version: str,
+    new_version: str | None,
+    *,
+    mode: str,
+    replace_existing: bool = False,
+    ignore_missing: bool = False,
+) -> dict[str, object]:
+    """Apply a changelog section rename/remove to ``target_file`` in place.
+
+    ``mode='rename'`` rewrites the heading from ``old_version`` to
+    ``new_version``; ``mode='remove'`` drops the section. Returns a
+    deterministic result dict with the relative target path and outcome flags.
+    """
+    target = Path(target_file)
+    text = target.read_text(encoding="utf-8") if target.is_file() else ""
+    if mode == "rename":
+        assert new_version is not None
+        updated = rename_release_section(
+            text,
+            old_version,
+            new_version,
+            ignore_missing=ignore_missing,
+            replace_existing=replace_existing,
+        )
+        outcome_key = "section_renamed"
+    elif mode == "remove":
+        updated = remove_release_section(
+            text,
+            old_version,
+            ignore_missing=ignore_missing,
+        )
+        outcome_key = "section_removed"
+    else:  # pragma: no cover - defensive
+        raise LaunchError(
+            f"Unsupported changelog section mode: {mode!r}",
+            code=CODE_USAGE_ERROR,
+            exit_code=2,
+        )
+    ledgercore.ensure_dir(target.parent)
+    ledgercore.atomic_write_text(target, updated)
+    return {
+        "target_file": str(target),
+        outcome_key: True,
+        "old_version": old_version,
+        "new_version": new_version,
+    }
+
+
+def rename_changelog_section(
+    workspace_root: Path,
+    *,
+    old_version: str,
+    new_version: str,
+    target_file: Path,
+    ignore_missing: bool = False,
+    replace_existing: bool = False,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    """Rename a changelog section heading without touching release records."""
+    target = _resolve_changelog_target(workspace_root, target_file)
+    text = target.read_text(encoding="utf-8") if target.is_file() else ""
+    updated = rename_release_section(
+        text,
+        old_version,
+        new_version,
+        ignore_missing=ignore_missing,
+        replace_existing=replace_existing,
+    )
+    result: dict[str, object] = {
+        "kind": "changelog_section_rename",
+        "target_file": str(target),
+        "old_version": old_version,
+        "new_version": new_version,
+        "section_renamed": find_release_section(text, old_version) is not None,
+    }
+    if dry_run:
+        result["updated"] = False
+        result["dry_run"] = True
+        return result
+    ledgercore.ensure_dir(target.parent)
+    ledgercore.atomic_write_text(target, updated)
+    result["updated"] = True
+    return result
+
+
+def remove_changelog_section(
+    workspace_root: Path,
+    *,
+    version: str,
+    target_file: Path,
+    ignore_missing: bool = False,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    """Remove a changelog section without touching release records."""
+    target = _resolve_changelog_target(workspace_root, target_file)
+    text = target.read_text(encoding="utf-8") if target.is_file() else ""
+    updated = remove_release_section(
+        text,
+        version,
+        ignore_missing=ignore_missing,
+    )
+    result: dict[str, object] = {
+        "kind": "changelog_section_remove",
+        "target_file": str(target),
+        "version": version,
+        "section_removed": find_release_section(text, version) is not None,
+    }
+    if dry_run:
+        result["updated"] = False
+        result["dry_run"] = True
+        return result
+    ledgercore.ensure_dir(target.parent)
+    ledgercore.atomic_write_text(target, updated)
+    result["updated"] = True
+    return result
+
+def cancel_release(
+    workspace_root: Path,
+    *,
+    version: str,
+    reason: str | None = None,
+    superseded_by: str | None = None,
+    force_released_unshipped: bool = False,
+    canceled_at: str | None = None,
+    target_file: Path | None = None,
+    remove_changelog_section: bool = False,
+    ignore_missing_section: bool = False,
+) -> dict[str, object]:
+    """Mark a release as canceled (never shipped).
+
+    Refuses to cancel a ``released`` record unless ``force_released_unshipped``
+    is set, because ``released`` implies the release shipped. Canceled releases
+    are excluded from previous-version inference and from default changelog
+    builds, but remain visible in ``release list`` as an audit tombstone.
+    """
+    existing = load_release(workspace_root, version)
+    if existing.status == "canceled":
+        raise LaunchError(
+            f"Release {version} is already canceled.",
+            code=CODE_CONFLICT,
+            exit_code=2,
+        )
+    if existing.status == "released" and not force_released_unshipped:
+        raise LaunchError(
+            f"Release {version} is 'released'; canceling a shipped release"
+            " requires --force-released-unshipped.",
+            code=CODE_USAGE_ERROR,
+            exit_code=2,
+            remediation=[
+                "Use release rename if the version number was wrong but it did ship.",
+                "Pass --force-released-unshipped if it was recorded as released"
+                " but never actually shipped.",
+            ],
+        )
+    if superseded_by is not None:
+        validate_release_version(superseded_by)
+    timestamp = canceled_at if canceled_at is not None else _today()
+    if canceled_at is not None:
+        _validate_date(canceled_at, "--canceled-at")
+    updated = replace(
+        existing,
+        status="canceled",
+        canceled_at=timestamp,
+        cancel_reason=reason,
+        superseded_by=superseded_by,
+    )
+    save_release(workspace_root, updated, overwrite=True)
+    event = append_event(
+        workspace_root,
+        event=EVENT_RELEASE_CANCELED,
+        release_version=version,
+        data={
+            "reason": reason,
+            "previous_status": existing.status,
+            "superseded_by": superseded_by,
+            "force_released_unshipped": bool(force_released_unshipped),
+        },
+    )
+    rebuild_indexes(workspace_root)
+    payload = _release_payload(workspace_root, updated, event.event_id)
+    if target_file is not None and remove_changelog_section:
+        changelog_result = _rewrite_changelog_section(
+            _resolve_changelog_target(workspace_root, target_file),
+            version,
+            None,
+            mode="remove",
+            ignore_missing=ignore_missing_section,
+        )
+        payload["changelog"] = changelog_result
+    return payload
+
+
+def rename_release(
+    workspace_root: Path,
+    *,
+    old_version: str,
+    new_version: str,
+    previous_version: str | None = UNSET,
+    title: str | None = None,
+    released_at: str | None = UNSET,
+    force_released_unshipped: bool = False,
+    rewrite_successors: bool = False,
+    target_file: Path | None = None,
+    rename_changelog_section: bool = False,
+    replace_existing_section: bool = False,
+) -> dict[str, object]:
+    """Rename a release from ``old_version`` to ``new_version``.
+
+    Moves the release bundle, rewrites the release and entry front matter to
+    the new version, optionally rewrites successor ``previous_version``
+    references, and appends a ``release.renamed`` event. Refuses a ``released``
+    source unless ``force_released_unshipped`` is set (the version number was
+    wrong but the release never actually shipped under that tag).
+    """
+    validate_release_version(old_version)
+    validate_release_version(new_version)
+    if old_version == new_version:
+        raise LaunchError(
+            "Rename source and target versions must differ.",
+            code=CODE_USAGE_ERROR,
+            exit_code=2,
+        )
+    existing = load_release(workspace_root, old_version)
+    if existing.status == "released" and not force_released_unshipped:
+        raise LaunchError(
+            f"Release {old_version} is 'released'; renaming a shipped release"
+            " requires --force-released-unshipped.",
+            code=CODE_USAGE_ERROR,
+            exit_code=2,
+            remediation=[
+                "Use release cancel to keep a tombstone if it never shipped.",
+                "Pass --force-released-unshipped if the version number was wrong.",
+            ],
+        )
+    paths = resolve_project_paths(workspace_root)
+    if release_markdown_path(paths, new_version).is_file():
+        raise LaunchError(
+            f"Release version already exists: {new_version}",
+            code=CODE_CONFLICT,
+            exit_code=2,
+            remediation=[f"Run `releaseledger release show {new_version}`."],
+        )
+    if released_at is not UNSET and released_at is not None:
+        _validate_date(str(released_at), "--released-at")
+    resolved_released_at = (
+        released_at if released_at is not UNSET else existing.released_at
+    )
+    resolved_previous = (
+        previous_version if previous_version is not UNSET else existing.previous_version
+    )
+    if resolved_previous is not None:
+        resolved_previous = validate_release_version(str(resolved_previous))
+    # Adjust a default tag title ("Release OLD") to the new version; keep a
+    # custom title unless --title overrides it.
+    if title is not None:
+        resolved_title = title
+    elif existing.title == f"Release {old_version}":
+        resolved_title = f"Release {new_version}"
+    else:
+        resolved_title = existing.title
+    # Successor check: any release pointing at the old version as a predecessor.
+    successors = [
+        r for r in list_releases(workspace_root)
+        if r.previous_version == old_version and r.version != old_version
+    ]
+    if successors and not rewrite_successors:
+        raise LaunchError(
+            f"{len(successors)} release(s) reference {old_version} as their"
+            " previous_version; pass --rewrite-successors to update them or"
+            " correct them first.",
+            code=CODE_CONFLICT,
+            exit_code=2,
+            data={"successors": sorted(r.version for r in successors)},
+        )
+    new_record = ReleaseRecord(
+        version=new_version,
+        status=existing.status,
+        title=resolved_title,
+        created_at=existing.created_at,
+        released_at=resolved_released_at,
+        previous_version=resolved_previous,
+        canceled_at=existing.canceled_at,
+        cancel_reason=existing.cancel_reason,
+        superseded_by=existing.superseded_by,
+        note=existing.note,
+        changelog_file=existing.changelog_file,
+        boundary_ref=existing.boundary_ref,
+        source_refs=existing.source_refs,
+        source_count=existing.source_count,
+        entry_count=existing.entry_count,
+        artifact_count=existing.artifact_count,
+    )
+    rename_release_bundle(workspace_root, old_version, new_record)
+    rewrote_successors = False
+    if successors:
+        for successor in successors:
+            updated_successor = replace(successor, previous_version=new_version)
+            save_release(workspace_root, updated_successor, overwrite=True)
+        rewrote_successors = True
+    event = append_event(
+        workspace_root,
+        event=EVENT_RELEASE_RENAMED,
+        release_version=new_version,
+        data={
+            "from_version": old_version,
+            "to_version": new_version,
+            "previous_status": existing.status,
+            "rewrote_successors": bool(rewrote_successors),
+        },
+    )
+    rebuild_indexes(workspace_root)
+    payload = _release_payload(workspace_root, new_record, event.event_id)
+    if target_file is not None and rename_changelog_section:
+        changelog_result = _rewrite_changelog_section(
+            _resolve_changelog_target(workspace_root, target_file),
+            old_version,
+            new_version,
+            mode="rename",
+            replace_existing=replace_existing_section,
+        )
+        payload["changelog"] = changelog_result
+    return payload
+
+
+def check_release_chain(
+    workspace_root: Path,
+    *,
+    allow_canceled_predecessors: bool = False,
+) -> dict[str, object]:
+    """Inspect the release predecessor chain and report problems.
+
+    Reported problem kinds: ``missing_previous``, ``self_previous``,
+    ``future_previous``, ``canceled_previous``, ``root_has_previous``. Returns
+    a deterministic ``release_chain_check`` payload; ``ok`` is True when no
+    problems were found.
+    """
+    releases = list_releases(workspace_root)
+    by_version = {record.version: record for record in releases}
+    problems: list[dict[str, object]] = []
+    for record in releases:
+        prev = record.previous_version
+        if prev is None:
+            continue
+        if prev == record.version:
+            problems.append(
+                {
+                    "kind": "self_previous",
+                    "version": record.version,
+                    "previous_version": prev,
+                    "detail": "Release points to itself as its previous_version.",
+                }
+            )
+            continue
+        if prev not in by_version:
+            problems.append(
+                {
+                    "kind": "missing_previous",
+                    "version": record.version,
+                    "previous_version": prev,
+                    "detail": f"previous_version {prev!r} has no matching release.",
+                }
+            )
+            continue
+        predecessor = by_version[prev]
+        if predecessor.status == "canceled" and not allow_canceled_predecessors:
+            problems.append(
+                {
+                    "kind": "canceled_previous",
+                    "version": record.version,
+                    "previous_version": prev,
+                    "detail": "previous_version points at a canceled release.",
+                }
+            )
+        pred_key = _predecessor_key(predecessor.version, predecessor.released_at)
+        record_key = _predecessor_key(record.version, record.released_at)
+        if _is_strictly_newer(pred_key, record_key):
+            problems.append(
+                {
+                    "kind": "future_previous",
+                    "version": record.version,
+                    "previous_version": prev,
+                    "detail": "previous_version points at a newer release.",
+                }
+            )
+    semver_releases = [
+        r for r in releases if parse_release_version_tuple(r.version) is not None
+    ]
+    if semver_releases:
+        root = min(
+            semver_releases,
+            key=lambda r: (parse_release_version_tuple(r.version), r.version),
+        )
+        if root.previous_version is not None:
+            problems.append(
+                {
+                    "kind": "root_has_previous",
+                    "version": root.version,
+                    "previous_version": root.previous_version,
+                    "detail": "Earliest semantic release should have no predecessor.",
+                }
+            )
+    problems.sort(key=lambda item: (str(item["kind"]), str(item["version"])))
+    return {
+        "kind": "release_chain_check",
+        "ok": not problems,
+        "problem_count": len(problems),
+        "problems": problems,
+    }
+
+
+def repair_release_chain(
+    workspace_root: Path,
+    *,
+    apply_changes: bool = False,
+    allow_canceled_predecessors: bool = False,
+) -> dict[str, object]:
+    """Recompute predecessor links from release order and report/apply fixes.
+
+    Builds the canonical chain by sorting non-canceled releases by
+    (released_at, semantic version) and assigning each release's
+    ``previous_version`` to the release immediately before it (the first gets
+    ``None``). Canceled releases are left untouched. With ``apply_changes``
+    False this is a dry run that reports the planned changes; with True it
+    writes them, appends a ``release.chain_repaired`` event, and rebuilds
+    indexes.
+    """
+    releases = list_releases(workspace_root)
+    chain = [
+        r for r in releases if r.status != "canceled"
+    ]
+    chain.sort(key=lambda r: _predecessor_key(r.version, r.released_at))
+    changes: list[dict[str, object]] = []
+    for index, record in enumerate(chain):
+        expected = chain[index - 1].version if index > 0 else None
+        if record.previous_version != expected:
+            changes.append(
+                {
+                    "version": record.version,
+                    "from": record.previous_version,
+                    "to": expected,
+                }
+            )
+    payload: dict[str, object] = {
+        "kind": "release_chain_repair",
+        "applied": bool(apply_changes),
+        "change_count": len(changes),
+        "changes": changes,
+        "ok": not changes,
+    }
+    if not apply_changes or not changes:
+        return payload
+    by_version = {record.version: record for record in chain}
+    for change in changes:
+        record = by_version[str(change["version"])]
+        updated = replace(record, previous_version=change["to"])  # type: ignore[arg-type]
+        save_release(workspace_root, updated, overwrite=True)
+    event = append_event(
+        workspace_root,
+        event=EVENT_RELEASE_CHAIN_REPAIRED,
+        data={
+            "changes": changes,
+            "allow_canceled_predecessors": bool(allow_canceled_predecessors),
+        },
+    )
+    rebuild_indexes(workspace_root)
+    payload["events"] = [event.event_id]
     return payload

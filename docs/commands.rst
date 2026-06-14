@@ -37,14 +37,41 @@ Release commands
                                         [--source-ref REF]...
                                         [--source-count N]
    releaseledger release update VERSION [release metadata options]
+                                       [--clear-previous]
+                                       [--clear-changelog-file]
+                                       [--clear-boundary-ref]
+                                       [--clear-source-refs]
+                                       [--clear-source-count]
+                                       [--clear-released-at] [--force]
    releaseledger release tag VERSION [release metadata options]
    releaseledger release finalize VERSION [--released-at YYYY-MM-DD]
                                           [--changelog-file PATH]
+   releaseledger release cancel VERSION [--reason TEXT]
+                                       [--superseded-by VERSION]
+                                       [--force-released-unshipped]
+                                       [--canceled-at YYYY-MM-DD]
+                                       [--target-file PATH]
+                                       [--remove-changelog-section]
+                                       [--ignore-missing]
+   releaseledger release rename OLD_VERSION NEW_VERSION [--previous VERSION]
+                                                         [--title TEXT]
+                                                         [--released-at YYYY-MM-DD]
+                                                         [--force-released-unshipped]
+                                                         [--rewrite-successors]
+                                                         [--target-file PATH]
+                                                         [--rename-changelog-section]
+                                                         [--replace-existing-section]
+   releaseledger release chain check
+   releaseledger release chain repair [--dry-run] [--apply]
    releaseledger release list
    releaseledger release show VERSION
 
 ``release tag`` creates a release with status ``released``. ``release finalize``
-transitions an existing release to ``released``.
+transitions an existing release to ``released``. ``release cancel`` marks a
+release as ``canceled`` (never shipped; excluded from previous-version
+inference). ``release rename`` moves a release bundle to a new version and
+rewrites its front matter, entries, and optionally its changelog section.
+``release chain check``/``repair`` validate and rebuild predecessor links.
 
 Entry commands
 --------------
@@ -114,3 +141,19 @@ Changelog commands
                                [--include-status STATUS]...
                                [--strict]
                                [--allow-empty]
+
+Changelog section correction commands
+-------------------------------------
+
+.. code-block:: text
+
+   releaseledger changelog-section remove-section VERSION --target-file PATH
+                                                     [--ignore-missing] [--dry-run]
+   releaseledger changelog-section rename-section OLD_VERSION NEW_VERSION
+                                                     --target-file PATH
+                                                     [--ignore-missing]
+                                                     [--replace-existing] [--dry-run]
+
+These rewrite release section headings in an existing changelog file without
+touching release records. ``release rename --rename-changelog-section`` and
+``release cancel --remove-changelog-section`` apply the same corrections inline.

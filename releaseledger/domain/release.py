@@ -8,6 +8,7 @@ front-matter representation.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 import ledgercore
@@ -23,6 +24,7 @@ from releaseledger.errors import CODE_VALIDATION_ERROR, LaunchError
 __all__ = [
     "RELEASE_FRONT_MATTER_KEY_ORDER",
     "ReleaseRecord",
+    "parse_release_version_tuple",
 ]
 
 # Canonical key order used when writing release.md front matter.
@@ -36,6 +38,9 @@ RELEASE_FRONT_MATTER_KEY_ORDER = (
     "created_at",
     "released_at",
     "previous_version",
+    "canceled_at",
+    "cancel_reason",
+    "superseded_by",
     "changelog_file",
     "boundary_ref",
     "source_refs",
@@ -55,6 +60,9 @@ class ReleaseRecord:
     created_at: str = field(default_factory=ledgercore.utc_now_iso)
     released_at: str | None = None
     previous_version: str | None = None
+    canceled_at: str | None = None
+    cancel_reason: str | None = None
+    superseded_by: str | None = None
     note: str | None = None
     changelog_file: str | None = None
     boundary_ref: str | None = None
@@ -78,6 +86,9 @@ class ReleaseRecord:
             "created_at": self.created_at,
             "released_at": self.released_at,
             "previous_version": self.previous_version,
+            "canceled_at": self.canceled_at,
+            "cancel_reason": self.cancel_reason,
+            "superseded_by": self.superseded_by,
             "note": self.note,
             "changelog_file": self.changelog_file,
             "boundary_ref": self.boundary_ref,
@@ -168,6 +179,61 @@ def _require_optional_global_ref(value: object, field_name: str) -> str | None:
         ) from exc
 
 
+# Release-version-shaped optional fields (e.g. superseded_by). Mirrors the
+# stricter validation in storage.store.validate_release_version without the
+# circular import; domain validates shape, storage re-validates for safety.
+_RELEASE_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+
+
+def _require_optional_release_version(value: object, field_name: str) -> str | None:
+    if value is None:
+        return None
+    raw = _require_str(value, field_name)
+    if raw != raw.strip() or any(ch.isspace() for ch in raw):
+        raise LaunchError(
+            f"Release {field_name} must not contain whitespace: {raw!r}.",
+            code=CODE_VALIDATION_ERROR,
+            exit_code=2,
+        )
+    if "/" in raw or "\\" in raw or any(ord(ch) < 32 for ch in raw):
+        raise LaunchError(
+            f"Invalid release {field_name}: {raw!r}.",
+            code=CODE_VALIDATION_ERROR,
+            exit_code=2,
+        )
+    if _RELEASE_VERSION_RE.fullmatch(raw) is None:
+        raise LaunchError(
+            f"Invalid release {field_name}: {raw!r}.",
+            code=CODE_VALIDATION_ERROR,
+            exit_code=2,
+        )
+    return raw
+
+
+# Internal semantic-version parser for ordering/inference. Handles the
+# common ``v0.1.0`` / ``0.1.0`` / ``1.2`` shapes used by release tags.
+# Returns None for non-parseable versions so callers can fall back to string
+# ordering. No external runtime dependency.
+_SEMVER_RE = re.compile(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-+].*)?$")
+
+
+def parse_release_version_tuple(version: str) -> tuple[int, int, int] | None:
+    """Parse ``v1.2.3``-style versions into a comparable ``(major, minor, patch)``.
+
+    Returns ``None`` when the version is not a recognizable semantic version so
+    callers can fall back to lexicographic ordering for non-standard versions.
+    """
+    if not isinstance(version, str):
+        return None
+    match = _SEMVER_RE.match(version.strip())
+    if match is None:
+        return None
+    major = int(match.group(1))
+    minor = int(match.group(2) or 0)
+    patch = int(match.group(3) or 0)
+    return (major, minor, patch)
+
+
 def release_from_dict(data: dict[str, object]) -> ReleaseRecord:
     """Build a :class:`ReleaseRecord` with strict validation."""
     if data.get("object_type") != "release":
@@ -208,6 +274,13 @@ def release_from_dict(data: dict[str, object]) -> ReleaseRecord:
         released_at=_require_optional_str(data.get("released_at"), "released_at"),
         previous_version=_require_optional_str(
             data.get("previous_version"), "previous_version"
+        ),
+        canceled_at=_require_optional_str(data.get("canceled_at"), "canceled_at"),
+        cancel_reason=_require_optional_str(
+            data.get("cancel_reason"), "cancel_reason"
+        ),
+        superseded_by=_require_optional_release_version(
+            data.get("superseded_by"), "superseded_by"
         ),
         note=_require_optional_str(data.get("note"), "note"),
         changelog_file=_require_optional_str(

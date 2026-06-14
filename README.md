@@ -104,7 +104,9 @@ renders and inserts the final changelog section.
 | Ledger ref        | Branch-scoped namespace, defaulting to `main`.                                                            |
 | Global source ref | External provenance token such as `tl:task-0103`; releaseledger records it but does not resolve it.       |
 
-Release statuses are `planned`, `draft`, `candidate`, `released`, and `yanked`.
+Release statuses are `planned`, `draft`, `candidate`, `released`, `yanked`, and
+`canceled` (never shipped; excluded from previous-version inference and not
+built into public changelogs by default).
 Entry statuses are `draft`, `accepted`, and `rejected`. Builds include accepted
 entries by default.
 
@@ -126,9 +128,32 @@ releaseledger release create VERSION [--title TEXT] [--status STATUS]
                                      [--source-ref REF]...
                                      [--source-count N]
 releaseledger release update VERSION [same metadata options]
+                                     [--clear-previous]
+                                     [--clear-changelog-file]
+                                     [--clear-boundary-ref]
+                                     [--clear-source-refs]
+                                     [--clear-source-count]
+                                     [--clear-released-at] [--force]
 releaseledger release tag VERSION [release metadata options]
 releaseledger release finalize VERSION [--released-at YYYY-MM-DD]
                                        [--changelog-file PATH]
+releaseledger release cancel VERSION [--reason TEXT]
+                                    [--superseded-by VERSION]
+                                    [--force-released-unshipped]
+                                    [--canceled-at YYYY-MM-DD]
+                                    [--target-file PATH]
+                                    [--remove-changelog-section]
+                                    [--ignore-missing]
+releaseledger release rename OLD_VERSION NEW_VERSION [--previous VERSION]
+                                                      [--title TEXT]
+                                                      [--released-at YYYY-MM-DD]
+                                                      [--force-released-unshipped]
+                                                      [--rewrite-successors]
+                                                      [--target-file PATH]
+                                                      [--rename-changelog-section]
+                                                      [--replace-existing-section]
+releaseledger release chain check
+releaseledger release chain repair [--dry-run] [--apply]
 releaseledger release list
 releaseledger release show VERSION
 
@@ -167,6 +192,13 @@ releaseledger build VERSION [--target-file PATH]
                             [--include-status STATUS]...
                             [--strict]
                             [--allow-empty]
+
+releaseledger changelog-section remove-section VERSION --target-file PATH
+                                              [--ignore-missing] [--dry-run]
+releaseledger changelog-section rename-section OLD_VERSION NEW_VERSION
+                                              --target-file PATH
+                                              [--ignore-missing]
+                                              [--replace-existing] [--dry-run]
 
 releaseledger storage where
 releaseledger config show
@@ -257,6 +289,52 @@ postprocessors = [
   { pattern = "releaseledger", replace = "Releaseledger" },
 ]
 ```
+
+## Correcting canceled or misnumbered releases
+
+When a recorded release was never actually shipped (no git tag, no package
+publish) or was recorded under the wrong version number, fix it with the
+release-correction commands instead of editing `.releaseledger/` storage.
+
+```bash
+# 1. Verify the real shipped baseline first (git tags / package index / user).
+git tag --list | sort -V | tail
+
+# 2. Inspect the stored chain and repair a broken backfill.
+releaseledger release chain check
+releaseledger release chain repair --dry-run
+releaseledger release chain repair --apply
+
+# 3. Clear an optional field on a root release (e.g. v0.1.0).
+releaseledger release update v0.1.0 --clear-previous
+
+# 4. Rename an unshipped, misnumbered release and its changelog section.
+releaseledger release rename v0.4.3 v0.5.0 \
+  --previous v0.4.2 \
+  --force-released-unshipped \
+  --target-file CHANGELOG.md \
+  --rename-changelog-section
+
+# 5. Or keep the wrong version as a visible audit tombstone.
+releaseledger release cancel v0.4.3 \
+  --reason "Never shipped; superseded by v0.5.0" \
+  --superseded-by v0.5.0 \
+  --force-released-unshipped
+```
+
+Decision tree:
+
+- Check shipped evidence first (git tags, changelog headings, explicit user
+  statement).
+- If a version was never shipped and the number was wrong, use
+  `release rename`.
+- If the wrong version should remain as an audit tombstone, use
+  `release cancel` (sets status `canceled`; never use `yanked` for never-shipped
+  releases).
+- When backfilling old releases, always pass `--previous` explicitly and run
+  `release chain check` afterwards.
+- Build the changelog from the net shipped baseline, then bump the package
+  version.
 
 ## Cross-ledger provenance
 

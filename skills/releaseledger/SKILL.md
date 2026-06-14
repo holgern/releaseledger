@@ -89,6 +89,53 @@ releaseledger --cwd PATH --json release show VERSION
 6. Verify with:
    `releaseledger release show VERSION`.
 
+## Correcting canceled or misnumbered releases
+
+Use this when a recorded release was never actually shipped (no git tag, no
+package publish) or was recorded under the wrong version number. Never edit
+`.releaseledger/` storage directly; never use `yanked` for a never-shipped
+release.
+
+Decision tree:
+
+1. Check shipped evidence first: git tags, existing changelog headings, or an
+   explicit user statement.
+2. If a stored release version was never shipped and the number was wrong, use
+   `release rename`. Pass `--force-released-unshipped` if it is currently marked
+   `released`, `--previous` to set the real predecessor, and
+   `--rename-changelog-section --target-file CHANGELOG.md` to fix the heading.
+3. If the wrong version should remain as a visible audit tombstone, use
+   `release cancel --reason "..." --superseded-by VERSION` (sets status
+   `canceled`).
+4. When backfilling old releases, always pass `--previous` explicitly, then run
+   `release chain check`. Repair with `release chain repair --dry-run` then
+   `--apply`.
+5. Clear an optional field (e.g. a root release's `previous_version`) with
+   `release update VERSION --clear-previous`.
+6. Build the changelog from the net shipped baseline, then bump the package
+   version.
+
+Example (canceled v0.4.3, intended v0.5.0 from v0.4.2):
+
+```bash
+releaseledger release chain check
+releaseledger release chain repair --apply
+releaseledger release rename v0.4.3 v0.5.0 \
+  --previous v0.4.2 \
+  --force-released-unshipped \
+  --target-file CHANGELOG.md \
+  --rename-changelog-section
+```
+
+Or keep the tombstone:
+
+```bash
+releaseledger release cancel v0.4.3 \
+  --reason "Never shipped; superseded by v0.5.0" \
+  --superseded-by v0.5.0 \
+  --force-released-unshipped
+```
+
 ## Changelog entry protocol
 
 Use this when the user asks to add release-note material.

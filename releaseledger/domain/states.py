@@ -25,6 +25,7 @@ RELEASE_STATUSES = frozenset(
         "candidate",
         "released",
         "yanked",
+        "canceled",
     }
 )
 

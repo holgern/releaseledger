@@ -77,3 +77,21 @@ Strict builds
 ``releaseledger build --strict`` blocks on entry lint errors, empty included
 entries unless ``--allow-empty`` is supplied, and release source refs that are
 not covered by included entries.
+
+Section correction
+------------------
+
+When a release section in the target changelog is stale (wrong version number
+or a canceled release), correct it with the section helpers rather than editing
+the file by hand:
+
+.. code-block:: text
+
+   releaseledger changelog-section rename-section OLD NEW --target-file CHANGELOG.md
+   releaseledger changelog-section remove-section VERSION --target-file CHANGELOG.md
+
+``release rename --rename-changelog-section`` and
+``release cancel --remove-changelog-section`` apply the same corrections as part
+of a release correction. Both fail when the source section is missing unless
+``--ignore-missing`` is passed, and ``rename-section`` fails when the
+destination section already exists unless ``--replace-existing`` is passed.

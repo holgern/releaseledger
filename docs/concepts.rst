@@ -15,6 +15,13 @@ Release statuses are:
 - ``candidate``
 - ``released``
 - ``yanked``
+- ``canceled``
+
+``canceled`` means the release was never shipped: it is excluded from
+previous-version inference and not built into public changelogs by default.
+Canceled releases may carry ``canceled_at``, ``cancel_reason``, and
+``superseded_by`` metadata and remain visible in ``release list`` as an audit
+tombstone.
 
 Entry
 -----

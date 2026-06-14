@@ -29,6 +29,7 @@ from releaseledger.domain.release import ReleaseRecord
 from releaseledger.domain.states import ENTRY_KIND_TITLES
 from releaseledger.errors import (
     CODE_CONFLICT,
+    CODE_NOT_FOUND,
     CODE_USAGE_ERROR,
     CODE_VALIDATION_ERROR,
     LaunchError,
@@ -47,6 +48,8 @@ __all__ = [
     "build_changelog_render_context",
     "find_release_section",
     "insert_release_section",
+    "remove_release_section",
+    "rename_release_section",
     "render_changelog_section",
     "replace_release_section",
 ]
@@ -476,6 +479,75 @@ def replace_release_section(text: str, version: str, section: str) -> str:
     section = _ensure_final_newline(section)
     new_lines = lines[: span.start] + [section] + lines[span.end :]
     return _ensure_final_newline("".join(new_lines))
+
+
+def remove_release_section(
+    text: str,
+    version: str,
+    *,
+    ignore_missing: bool = False,
+) -> str:
+    """Remove the changelog section for ``version``.
+
+    Fails unless ``ignore_missing`` is set when the section is absent. Preserves
+    all other sections and the final newline. Never invoked by commands that do
+    not explicitly remove/cancel/rename a section.
+    """
+    span = find_release_section(text, version)
+    if span is None:
+        if ignore_missing:
+            return _ensure_final_newline(text)
+        raise LaunchError(
+            f"Changelog has no section for {version}.",
+            code=CODE_NOT_FOUND,
+            exit_code=2,
+            remediation=["Pass --ignore-missing to skip a missing section."],
+        )
+    lines = text.splitlines(keepends=True)
+    new_lines = lines[: span.start] + lines[span.end :]
+    return _collapse_blank_runs(_ensure_final_newline("".join(new_lines)))
+
+
+def rename_release_section(
+    text: str,
+    old_version: str,
+    new_version: str,
+    *,
+    ignore_missing: bool = False,
+    replace_existing: bool = False,
+) -> str:
+    """Rename the changelog section heading ``old_version`` to ``new_version``.
+
+    Rewrites only the section heading line; the section body and every other
+    section are preserved. Fails unless ``ignore_missing`` when the old section
+    is absent, and fails unless ``replace_existing`` when a section for
+    ``new_version`` already exists.
+    """
+    span = find_release_section(text, old_version)
+    if span is None:
+        if ignore_missing:
+            return _ensure_final_newline(text)
+        raise LaunchError(
+            f"Changelog has no section for {old_version}.",
+            code=CODE_NOT_FOUND,
+            exit_code=2,
+            remediation=["Pass --ignore-missing to skip a missing section."],
+        )
+    if find_release_section(text, new_version) is not None and not replace_existing:
+        raise LaunchError(
+            f"Changelog already has a section for {new_version}.",
+            code=CODE_CONFLICT,
+            exit_code=2,
+            remediation=[
+                "Pass --replace-existing to overwrite the destination section."
+            ],
+        )
+    lines = text.splitlines(keepends=True)
+    heading = lines[span.start]
+    escaped = re.escape(old_version)
+    new_heading = re.sub(escaped, _literal_replacer(new_version), heading, count=1)
+    lines[span.start] = new_heading
+    return _ensure_final_newline("".join(lines))
 
 
 def _splice(lines: list[str], at: int, section: str) -> str:

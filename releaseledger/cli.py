@@ -47,9 +47,16 @@ from releaseledger.services.entries import (
 from releaseledger.services.entry_lint import lint_release_entries
 from releaseledger.services.entry_prompt import build_entry_prompt
 from releaseledger.services.releases import (
+    UNSET,
+    cancel_release,
+    check_release_chain,
     create_release,
     finalize_release,
     list_release_records,
+    remove_changelog_section,
+    rename_changelog_section,
+    rename_release,
+    repair_release_chain,
     show_release,
     tag_release,
     update_release,
@@ -306,8 +313,44 @@ def release_update_command(
     boundary_ref: Annotated[str | None, typer.Option("--boundary-ref")] = None,
     source_refs: Annotated[list[str] | None, typer.Option("--source-ref")] = None,
     source_count: Annotated[int | None, typer.Option("--source-count")] = None,
+    released_at: Annotated[
+        str | None,
+        typer.Option("--released-at", help="Release date YYYY-MM-DD."),
+    ] = None,
+    clear_previous: Annotated[
+        bool,
+        typer.Option("--clear-previous", help="Clear the previous_version field."),
+    ] = False,
+    clear_changelog_file: Annotated[
+        bool,
+        typer.Option(
+            "--clear-changelog-file", help="Clear the changelog_file field."
+        ),
+    ] = False,
+    clear_boundary_ref: Annotated[
+        bool,
+        typer.Option("--clear-boundary-ref", help="Clear the boundary_ref field."),
+    ] = False,
+    clear_source_refs: Annotated[
+        bool,
+        typer.Option("--clear-source-refs", help="Clear the source_refs field."),
+    ] = False,
+    clear_source_count: Annotated[
+        bool,
+        typer.Option("--clear-source-count", help="Clear the source_count field."),
+    ] = False,
+    clear_released_at: Annotated[
+        bool,
+        typer.Option("--clear-released-at", help="Clear the released_at field."),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force", help="Allow clearing released_at on a released release."
+        ),
+    ] = False,
 ) -> None:
-    """Update release metadata."""
+    """Update release metadata, with explicit clear flags for optional fields."""
     state = cli_state_from_context(ctx)
 
     def produce() -> CommandResult:
@@ -317,11 +360,25 @@ def release_update_command(
             title=title,
             status=status,
             note=note,
-            previous_version=previous_version,
-            changelog_file=changelog_file,
-            boundary_ref=boundary_ref,
-            source_refs=tuple(source_refs) if source_refs is not None else None,
-            source_count=source_count,
+            previous_version=(
+                previous_version if previous_version is not None else UNSET
+            ),
+            changelog_file=(
+                changelog_file if changelog_file is not None else UNSET
+            ),
+            boundary_ref=boundary_ref if boundary_ref is not None else UNSET,
+            source_refs=(
+                tuple(source_refs) if source_refs is not None else UNSET
+            ),
+            source_count=source_count if source_count is not None else UNSET,
+            released_at=released_at if released_at is not None else UNSET,
+            clear_previous=clear_previous,
+            clear_changelog_file=clear_changelog_file,
+            clear_boundary_ref=clear_boundary_ref,
+            clear_source_refs=clear_source_refs,
+            clear_source_count=clear_source_count,
+            clear_released_at=clear_released_at,
+            force=force,
         )
         return result, _event_ids(result), f"updated release {version}"
 
@@ -426,6 +483,232 @@ def release_show_command(
     run_command(
         command="release.show",
         result_type="release",
+        json_output=state.json_output,
+        produce=produce,
+    )
+
+
+@release_app.command("cancel")
+def release_cancel_command(
+    ctx: typer.Context,
+    version: Annotated[str, typer.Argument(help="Release version to cancel.")],
+    reason: Annotated[
+        str | None,
+        typer.Option("--reason", help="Why the release was canceled."),
+    ] = None,
+    superseded_by: Annotated[
+        str | None,
+        typer.Option("--superseded-by", help="Release version that replaces this one."),
+    ] = None,
+    force_released_unshipped: Annotated[
+        bool,
+        typer.Option(
+            "--force-released-unshipped",
+            help="Allow canceling a release currently marked 'released'.",
+        ),
+    ] = False,
+    canceled_at: Annotated[
+        str | None,
+        typer.Option("--canceled-at", help="Cancellation date YYYY-MM-DD."),
+    ] = None,
+    target_file: Annotated[
+        Path | None,
+        typer.Option("--target-file", help="Changelog file to update."),
+    ] = None,
+    remove_changelog_section: Annotated[
+        bool,
+        typer.Option(
+            "--remove-changelog-section",
+            help="Remove the release section from the changelog file.",
+        ),
+    ] = False,
+    ignore_missing_section: Annotated[
+        bool,
+        typer.Option("--ignore-missing", help="Skip a missing changelog section."),
+    ] = False,
+) -> None:
+    """Mark a release as canceled (never shipped)."""
+    state = cli_state_from_context(ctx)
+
+    def produce() -> CommandResult:
+        result = cancel_release(
+            _paths(ctx).workspace_root,
+            version=version,
+            reason=reason,
+            superseded_by=superseded_by,
+            force_released_unshipped=force_released_unshipped,
+            canceled_at=canceled_at,
+            target_file=target_file,
+            remove_changelog_section=remove_changelog_section,
+            ignore_missing_section=ignore_missing_section,
+        )
+        return result, _event_ids(result), f"canceled release {version}"
+
+    run_command(
+        command="release.cancel",
+        result_type="release",
+        json_output=state.json_output,
+        produce=produce,
+    )
+
+
+@release_app.command("rename")
+def release_rename_command(
+    ctx: typer.Context,
+    old_version: Annotated[str, typer.Argument(help="Release version to rename.")],
+    new_version: Annotated[
+        str, typer.Argument(help="New release version string.")
+    ],
+    previous_version: Annotated[
+        str | None,
+        typer.Option(
+            "--previous", help="Override previous_version for the renamed release."
+        ),
+    ] = None,
+    title: Annotated[
+        str | None,
+        typer.Option("--title", help="Override the release title."),
+    ] = None,
+    released_at: Annotated[
+        str | None,
+        typer.Option("--released-at", help="Release date YYYY-MM-DD."),
+    ] = None,
+    force_released_unshipped: Annotated[
+        bool,
+        typer.Option(
+            "--force-released-unshipped",
+            help="Allow renaming a release currently marked 'released'.",
+        ),
+    ] = False,
+    rewrite_successors: Annotated[
+        bool,
+        typer.Option(
+            "--rewrite-successors",
+            help="Update releases whose previous_version points at the old version.",
+        ),
+    ] = False,
+    target_file: Annotated[
+        Path | None,
+        typer.Option("--target-file", help="Changelog file to update."),
+    ] = None,
+    rename_changelog_section: Annotated[
+        bool,
+        typer.Option(
+            "--rename-changelog-section",
+            help="Rename the changelog section heading to the new version.",
+        ),
+    ] = False,
+    replace_existing_section: Annotated[
+        bool,
+        typer.Option(
+            "--replace-existing-section",
+            help="Overwrite a destination changelog section if it exists.",
+        ),
+    ] = False,
+) -> None:
+    """Rename a release and move its bundle to the new version."""
+    state = cli_state_from_context(ctx)
+
+    def produce() -> CommandResult:
+        result = rename_release(
+            _paths(ctx).workspace_root,
+            old_version=old_version,
+            new_version=new_version,
+            previous_version=(
+                previous_version if previous_version is not None else UNSET
+            ),
+            title=title,
+            released_at=released_at if released_at is not None else UNSET,
+            force_released_unshipped=force_released_unshipped,
+            rewrite_successors=rewrite_successors,
+            target_file=target_file,
+            rename_changelog_section=rename_changelog_section,
+            replace_existing_section=replace_existing_section,
+        )
+        return (
+            result,
+            _event_ids(result),
+            f"renamed release {old_version} to {new_version}",
+        )
+
+    run_command(
+        command="release.rename",
+        result_type="release",
+        json_output=state.json_output,
+        produce=produce,
+    )
+
+
+chain_app = typer.Typer(help="Inspect and repair the release predecessor chain.")
+release_app.add_typer(chain_app, name="chain")
+
+
+@chain_app.command("check")
+def release_chain_check_command(ctx: typer.Context) -> None:
+    """Report problems in the release predecessor chain."""
+    state = cli_state_from_context(ctx)
+
+    def produce() -> CommandResult:
+        result = check_release_chain(_paths(ctx).workspace_root)
+        problems = result.get("problems", [])
+        if problems:
+            lines = ["CHAIN PROBLEMS"]
+            for problem in problems:
+                assert isinstance(problem, dict)
+                lines.append(
+                    f"{problem.get('version')}  {problem.get('kind')}"
+                    f"  -> {problem.get('previous_version')}"
+                )
+            human = "\n".join(lines)
+        else:
+            human = "CHAIN OK"
+        return result, [], human
+
+    run_command(
+        command="release.chain.check",
+        result_type="release_chain_check",
+        json_output=state.json_output,
+        produce=produce,
+    )
+
+
+@chain_app.command("repair")
+def release_chain_repair_command(
+    ctx: typer.Context,
+    apply_changes: Annotated[
+        bool,
+        typer.Option("--apply", help="Write the computed chain fixes."),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Preview chain fixes without writing."),
+    ] = False,
+) -> None:
+    """Recompute predecessor links from release order (dry-run or --apply)."""
+    state = cli_state_from_context(ctx)
+    should_apply = apply_changes and not dry_run
+
+    def produce() -> CommandResult:
+        result = repair_release_chain(
+            _paths(ctx).workspace_root, apply_changes=should_apply
+        )
+        changes = result.get("changes", [])
+        if changes:
+            lines = ["CHAIN CHANGES" + (" (applied)" if should_apply else " (dry-run)")]
+            for change in changes:
+                assert isinstance(change, dict)
+                lines.append(
+                    f"{change.get('version')}  {change.get('from')}"
+                    f"  ->  {change.get('to')}"
+                )
+            human = "\n".join(lines)
+        else:
+            human = "CHAIN OK (no changes)"
+        return result, _event_ids(result), human
+
+    run_command(
+        command="release.chain.repair",
+        result_type="release_chain_repair",
         json_output=state.json_output,
         produce=produce,
     )
@@ -971,6 +1254,107 @@ def build_command(
         json_output=state.json_output,
     )
 
+
+
+changelog_section_app = typer.Typer(
+    help="Correct release sections in an existing changelog file."
+)
+app.add_typer(changelog_section_app, name="changelog-section")
+
+
+@changelog_section_app.command("remove-section")
+def changelog_remove_section_command(
+    ctx: typer.Context,
+    version: Annotated[str, typer.Argument(help="Release section to remove.")],
+    target_file: Annotated[
+        Path,
+        typer.Option("--target-file", help="Changelog file to update."),
+    ],
+    ignore_missing: Annotated[
+        bool,
+        typer.Option("--ignore-missing", help="Skip a missing section."),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Preview without writing."),
+    ] = False,
+) -> None:
+    """Remove a release section from a changelog file."""
+    state = cli_state_from_context(ctx)
+
+    def produce() -> CommandResult:
+        result = remove_changelog_section(
+            _paths(ctx).workspace_root,
+            version=version,
+            target_file=target_file,
+            ignore_missing=ignore_missing,
+            dry_run=dry_run,
+        )
+        human = (
+            f"previewed removal of section {version}"
+            if dry_run
+            else f"removed section {version}"
+        )
+        return result, [], human
+
+    run_command(
+        command="changelog-section.remove",
+        result_type="changelog_section_remove",
+        json_output=state.json_output,
+        produce=produce,
+    )
+
+
+@changelog_section_app.command("rename-section")
+def changelog_rename_section_command(
+    ctx: typer.Context,
+    old_version: Annotated[str, typer.Argument(help="Section version to rename.")],
+    new_version: Annotated[str, typer.Argument(help="New section version.")],
+    target_file: Annotated[
+        Path,
+        typer.Option("--target-file", help="Changelog file to update."),
+    ],
+    ignore_missing: Annotated[
+        bool,
+        typer.Option("--ignore-missing", help="Skip a missing source section."),
+    ] = False,
+    replace_existing: Annotated[
+        bool,
+        typer.Option(
+            "--replace-existing", help="Overwrite an existing destination section."
+        ),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Preview without writing."),
+    ] = False,
+) -> None:
+    """Rename a release section heading in a changelog file."""
+    state = cli_state_from_context(ctx)
+
+    def produce() -> CommandResult:
+        result = rename_changelog_section(
+            _paths(ctx).workspace_root,
+            old_version=old_version,
+            new_version=new_version,
+            target_file=target_file,
+            ignore_missing=ignore_missing,
+            replace_existing=replace_existing,
+            dry_run=dry_run,
+        )
+        human = (
+            f"previewed rename of section {old_version} to {new_version}"
+            if dry_run
+            else f"renamed section {old_version} to {new_version}"
+        )
+        return result, [], human
+
+    run_command(
+        command="changelog-section.rename",
+        result_type="changelog_section_rename",
+        json_output=state.json_output,
+        produce=produce,
+    )
 
 storage_app = typer.Typer(help="Storage diagnostics.")
 app.add_typer(storage_app, name="storage")
