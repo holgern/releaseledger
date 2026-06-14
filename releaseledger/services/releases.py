@@ -710,6 +710,7 @@ def remove_changelog_section(
     result["updated"] = True
     return result
 
+
 def cancel_release(
     workspace_root: Path,
     *,
@@ -856,7 +857,8 @@ def rename_release(
         resolved_title = existing.title
     # Successor check: any release pointing at the old version as a predecessor.
     successors = [
-        r for r in list_releases(workspace_root)
+        r
+        for r in list_releases(workspace_root)
         if r.previous_version == old_version and r.version != old_version
     ]
     if successors and not rewrite_successors:
@@ -1021,9 +1023,7 @@ def repair_release_chain(
     indexes.
     """
     releases = list_releases(workspace_root)
-    chain = [
-        r for r in releases if r.status != "canceled"
-    ]
+    chain = [r for r in releases if r.status != "canceled"]
     chain.sort(key=lambda r: _predecessor_key(r.version, r.released_at))
     changes: list[dict[str, object]] = []
     for index, record in enumerate(chain):

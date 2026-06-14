@@ -7,9 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ## [0.2.0] - Unreleased
+
 ### Added
+
 - Added release cancel, rename, and chain repair commands for correcting misnumbered or canceled releases
-- Added release update --clear-* flags to clear optional release metadata fields safely
+- Added release update --clear-\* flags to clear optional release metadata fields safely
 - Added changelog remove-section and rename-section commands to repair stale release headings
 - Added Keep a Changelog 1.1.0 rendering profile as the default for new projects with canonical group order
 - Added changelog skeleton creation with preamble, [Unreleased] section, and link reference management
@@ -18,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Added releaseledger review command for read-only release coverage, orphan detection, and changelog dry-run checks
 
 ### Changed
+
 - Improved previous-version inference to skip canceled and future predecessors with semantic-version ordering
 - Improved release date validation to require real calendar dates in Keep a Changelog strict mode
 

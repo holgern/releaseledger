@@ -324,9 +324,7 @@ def release_update_command(
     ] = False,
     clear_changelog_file: Annotated[
         bool,
-        typer.Option(
-            "--clear-changelog-file", help="Clear the changelog_file field."
-        ),
+        typer.Option("--clear-changelog-file", help="Clear the changelog_file field."),
     ] = False,
     clear_boundary_ref: Annotated[
         bool,
@@ -364,13 +362,9 @@ def release_update_command(
             previous_version=(
                 previous_version if previous_version is not None else UNSET
             ),
-            changelog_file=(
-                changelog_file if changelog_file is not None else UNSET
-            ),
+            changelog_file=(changelog_file if changelog_file is not None else UNSET),
             boundary_ref=boundary_ref if boundary_ref is not None else UNSET,
-            source_refs=(
-                tuple(source_refs) if source_refs is not None else UNSET
-            ),
+            source_refs=(tuple(source_refs) if source_refs is not None else UNSET),
             source_count=source_count if source_count is not None else UNSET,
             released_at=released_at if released_at is not None else UNSET,
             clear_previous=clear_previous,
@@ -557,9 +551,7 @@ def release_cancel_command(
 def release_rename_command(
     ctx: typer.Context,
     old_version: Annotated[str, typer.Argument(help="Release version to rename.")],
-    new_version: Annotated[
-        str, typer.Argument(help="New release version string.")
-    ],
+    new_version: Annotated[str, typer.Argument(help="New release version string.")],
     previous_version: Annotated[
         str | None,
         typer.Option(
@@ -1296,16 +1288,12 @@ def _render_review_human(version: str, result: dict[str, object]) -> str:
     changelog_status = "OK" if changelog_ok else "FAIL"
     reason = changelog_dict.get("reason")
     reason_text = f": {reason}" if reason else ""
-    lines.append(
-        f"  {coverage_label:<4} release source refs coverage"
-    )
+    lines.append(f"  {coverage_label:<4} release source refs coverage")
     lines.append(
         f"  {'OK' if lint_errors == 0 else 'FAIL':<4} entry lint "
         f"({lint_errors} error(s), {lint_warnings} warning(s))"
     )
-    lines.append(
-        f"  {changelog_status:<4} changelog dry-run build{reason_text}"
-    )
+    lines.append(f"  {changelog_status:<4} changelog dry-run build{reason_text}")
 
     orphans = result.get("orphan_entries", [])
     if isinstance(orphans, list) and orphans:
@@ -1313,10 +1301,7 @@ def _render_review_human(version: str, result: dict[str, object]) -> str:
         lines.append("Orphan entries:")
         for orphan in orphans:
             assert isinstance(orphan, dict)
-            lines.append(
-                f"  {orphan.get('entry_id')} "
-                f"{orphan.get('reason')}"
-            )
+            lines.append(f"  {orphan.get('entry_id')} {orphan.get('reason')}")
 
     recommendations = result.get("recommendations", [])
     if isinstance(recommendations, list) and recommendations:
@@ -1418,7 +1403,6 @@ def build_command(
     )
 
 
-
 changelog_section_app = typer.Typer(
     help="Correct release sections in an existing changelog file."
 )
@@ -1518,6 +1502,7 @@ def changelog_rename_section_command(
         json_output=state.json_output,
         produce=produce,
     )
+
 
 storage_app = typer.Typer(help="Storage diagnostics.")
 app.add_typer(storage_app, name="storage")

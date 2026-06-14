@@ -173,7 +173,6 @@ class ProjectConfig:
     changelog_templates: dict[str, dict[str, Any]] | None = None
 
 
-
 def _require_str(value: object, key: str, source: str) -> str:
     if not isinstance(value, str):
         raise LaunchError(
@@ -535,7 +534,6 @@ def render_default_releaseledger_toml(
             f'default_changelog = "{DEFAULT_CHANGELOG}"',
             f'default_status = "{DEFAULT_RELEASE_STATUS}"',
             "allow_dirty_worktree = true",
-
             "# Changelog build defaults.",
             "[changelog]",
             f'output = "{DEFAULT_CHANGELOG}"',

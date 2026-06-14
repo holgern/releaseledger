@@ -187,12 +187,8 @@ def test_review_reports_internal_only_when_internal_hidden(tmp_path: Path) -> No
 def test_review_reports_orphan_accepted_entries(tmp_path: Path) -> None:
     _init(tmp_path)
     _create_release(tmp_path, "0.5.0", source_refs=("tl:task-0103",))
-    _add_entry(
-        tmp_path, "0.5.0", summary="Covered entry", source_ref="tl:task-0103"
-    )
-    _add_entry(
-        tmp_path, "0.5.0", summary="No provenance at all"
-    )
+    _add_entry(tmp_path, "0.5.0", summary="Covered entry", source_ref="tl:task-0103")
+    _add_entry(tmp_path, "0.5.0", summary="No provenance at all")
     payload = _json(_jrun(tmp_path, "review", "0.5.0"))
     orphans = payload["result"]["orphan_entries"]
     assert len(orphans) == 1
@@ -211,9 +207,7 @@ def test_review_reports_orphan_accepted_entries(tmp_path: Path) -> None:
 
 def test_review_json_is_deterministic(tmp_path: Path) -> None:
     _init(tmp_path)
-    _create_release(
-        tmp_path, "0.5.0", source_refs=("tl:task-0103", "tl:task-0104")
-    )
+    _create_release(tmp_path, "0.5.0", source_refs=("tl:task-0103", "tl:task-0104"))
     _add_entry(
         tmp_path, "0.5.0", summary="Covered entry one", source_ref="tl:task-0103"
     )
@@ -235,9 +229,7 @@ def test_review_json_is_deterministic(tmp_path: Path) -> None:
 def test_review_human_output_is_stable(tmp_path: Path) -> None:
     _init(tmp_path)
     _create_release(tmp_path, "0.5.0", source_refs=("tl:task-0103",))
-    _add_entry(
-        tmp_path, "0.5.0", summary="Covered entry", source_ref="tl:task-0103"
-    )
+    _add_entry(tmp_path, "0.5.0", summary="Covered entry", source_ref="tl:task-0103")
     first = _run(tmp_path, "review", "0.5.0").stdout
     second = _run(tmp_path, "review", "0.5.0").stdout
     assert first == second
@@ -268,9 +260,7 @@ def test_review_strict_fails_when_build_would_fail(tmp_path: Path) -> None:
     # A covered release with a date should pass strict (mirror build --strict).
     update = _run(tmp_path, "release", "update", "0.5.0", "--released-at", "2026-06-14")
     assert update.exit_code == 0, update.stdout
-    _add_entry(
-        tmp_path, "0.5.0", summary="Covered entry", source_ref="tl:task-0103"
-    )
+    _add_entry(tmp_path, "0.5.0", summary="Covered entry", source_ref="tl:task-0103")
     passing = _jrun(tmp_path, "review", "0.5.0", "--strict")
     assert passing.exit_code == 0, passing.stdout
     assert json.loads(passing.stdout)["ok"] is True
@@ -284,9 +274,7 @@ def test_review_strict_fails_when_build_would_fail(tmp_path: Path) -> None:
 def test_review_does_not_write_changelog(tmp_path: Path) -> None:
     _init(tmp_path)
     _create_release(tmp_path, "0.5.0", source_refs=("tl:task-0103",))
-    _add_entry(
-        tmp_path, "0.5.0", summary="Covered entry", source_ref="tl:task-0103"
-    )
+    _add_entry(tmp_path, "0.5.0", summary="Covered entry", source_ref="tl:task-0103")
     toml_before = (tmp_path / ".releaseledger.toml").read_text()
     layout_before = {str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*")}
     _run(tmp_path, "review", "0.5.0", "--strict", "--target-file", "CHANGELOG.md")
@@ -309,9 +297,7 @@ def test_review_uses_boundary_ref_as_expected_ref(tmp_path: Path) -> None:
         source_refs=("tl:task-0103",),
         boundary_ref="tl:task-0105",
     )
-    _add_entry(
-        tmp_path, "0.5.0", summary="Covered source", source_ref="tl:task-0103"
-    )
+    _add_entry(tmp_path, "0.5.0", summary="Covered source", source_ref="tl:task-0103")
     payload = _json(_jrun(tmp_path, "review", "0.5.0"))
     refs = [row["source_ref"] for row in payload["result"]["coverage"]]
     assert refs == ["tl:task-0103", "tl:task-0105"]

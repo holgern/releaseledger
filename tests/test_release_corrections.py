@@ -137,12 +137,18 @@ class TestReleaseRecordFields:
 class TestUpdateClearFlags:
     def test_release_update_clear_previous_sets_none(self, tmp_path: Path) -> None:
         _init(tmp_path)
-        assert _run(
-            tmp_path, "release", "tag", "v0.4.2", "--released-at", "2026-04-01"
-        ).exit_code == 0
-        assert _run(
-            tmp_path, "release", "tag", "v0.4.3", "--released-at", "2026-05-01"
-        ).exit_code == 0
+        assert (
+            _run(
+                tmp_path, "release", "tag", "v0.4.2", "--released-at", "2026-04-01"
+            ).exit_code
+            == 0
+        )
+        assert (
+            _run(
+                tmp_path, "release", "tag", "v0.4.3", "--released-at", "2026-05-01"
+            ).exit_code
+            == 0
+        )
         result = _jout(
             _jrun(tmp_path, "release", "update", "v0.4.3", "--clear-previous")
         )
@@ -190,9 +196,7 @@ class TestUpdateClearFlags:
         _init(tmp_path)
         _run(tmp_path, "release", "tag", "v0.4.2", "--released-at", "2026-04-01")
         # Without --force: rejected.
-        result = _jrun(
-            tmp_path, "release", "update", "v0.4.2", "--clear-released-at"
-        )
+        result = _jrun(tmp_path, "release", "update", "v0.4.2", "--clear-released-at")
         assert result.exit_code != 0
         assert json.loads(result.stdout)["error"]["code"] == "USAGE_ERROR"
         # With --force: succeeds.
@@ -481,7 +485,10 @@ class TestChainCheckAndRepair:
         _init(tmp_path)
         # Earliest release points at a future release.
         create_release(
-            tmp_path, version="v0.1.0", status="released", released_at="2026-01-01",
+            tmp_path,
+            version="v0.1.0",
+            status="released",
+            released_at="2026-01-01",
             previous_version="v0.4.3",
         )
         create_release(
@@ -703,9 +710,7 @@ class TestRegressionFixture:
         kinds = [(p["kind"], p["version"]) for p in problems]
         assert ("future_previous", "v0.1.0") in kinds
         # 4. Repair the chain.
-        repair_payload = _jout(
-            _jrun(tmp_path, "release", "chain", "repair", "--apply")
-        )
+        repair_payload = _jout(_jrun(tmp_path, "release", "chain", "repair", "--apply"))
         assert repair_payload["result"]["applied"] is True
         # 5. Build a changelog with a stale v0.4.3 section and an entry.
         _run(

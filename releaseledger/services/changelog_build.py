@@ -354,7 +354,6 @@ def _extract_heading(section: str) -> str | None:
     return None
 
 
-
 def _resolve_template_profile(
     config: ProjectConfig,
     template_name: str,
@@ -377,7 +376,7 @@ def _resolve_template_profile(
 
     if template_name not in config.changelog_templates:
         available = sorted(config.changelog_templates.keys())
-        avail_str = ', '.join(available)
+        avail_str = ", ".join(available)
         raise LaunchError(
             f"Template {template_name!r} not found. Available: {avail_str}",
             code=CODE_USAGE_ERROR,
@@ -386,7 +385,6 @@ def _resolve_template_profile(
         )
 
     return config.changelog_templates[template_name]
-
 
 
 def render_changelog_section(
@@ -514,8 +512,6 @@ def _ensure_final_newline(text: str) -> str:
     return text if text.endswith("\n") else text + "\n"
 
 
-
-
 # ---------------------------------------------------------------------------
 # Link reference management for Keep a Changelog 1.1.0
 # ---------------------------------------------------------------------------
@@ -547,7 +543,7 @@ def parse_changelog_link_refs(text: str) -> dict[str, str]:
         last_content_idx -= 1
 
     # Parse link refs after the last content line
-    for line in lines[last_content_idx + 1:]:
+    for line in lines[last_content_idx + 1 :]:
         match = _LINK_REF_RE.match(line.strip())
         if match:
             refs[match.group(1)] = match.group(2)
@@ -573,7 +569,8 @@ def render_release_link(
         # Use custom template
         previous_tag = (
             _format_tag(previous_version, config.changelog_tag_prefix)
-            if previous_version else ""
+            if previous_version
+            else ""
         )
         url = config.changelog_compare_url_template.format(
             previous=previous_version or "",
@@ -631,8 +628,8 @@ def update_changelog_link_refs(
         last_content_idx -= 1
 
     # Split into content and existing refs
-    content_lines = lines[:last_content_idx + 1]
-    existing_ref_lines = lines[last_content_idx + 1:]
+    content_lines = lines[: last_content_idx + 1]
+    existing_ref_lines = lines[last_content_idx + 1 :]
 
     # Parse existing refs
     existing_refs: dict[str, str] = {}
@@ -654,6 +651,7 @@ def update_changelog_link_refs(
             result_lines.append(f"[{name}]: {url}\n")
 
     return _ensure_final_newline("".join(result_lines))
+
 
 def insert_release_section(
     text: str,

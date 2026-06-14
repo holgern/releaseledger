@@ -122,9 +122,7 @@ def classify_source_ref(
     else:
         label = COVERAGE_MISSING
     breakdown: dict[str, list[str]] = {
-        "entry_ids": _dedupe_preserve_order(
-            accepted + draft + rejected
-        ),
+        "entry_ids": _dedupe_preserve_order(accepted + draft + rejected),
         "accepted_entry_ids": _dedupe_preserve_order(accepted),
         "draft_entry_ids": _dedupe_preserve_order(draft),
         "rejected_entry_ids": _dedupe_preserve_order(rejected),
@@ -133,12 +131,7 @@ def classify_source_ref(
 
 
 def _is_orphan(entry: ReleaseEntryRecord) -> bool:
-    return not (
-        entry.source_refs
-        or entry.issues
-        or entry.prs
-        or entry.sources
-    )
+    return not (entry.source_refs or entry.issues or entry.prs or entry.sources)
 
 
 def _coverage_recommendation(ref: str, label: str) -> str | None:
@@ -148,15 +141,9 @@ def _coverage_recommendation(ref: str, label: str) -> str | None:
             " source refs."
         )
     if label == COVERAGE_DRAFT_ONLY:
-        return (
-            f"Review draft entry for {ref} and set status to accepted or"
-            " rejected."
-        )
+        return f"Review draft entry for {ref} and set status to accepted or rejected."
     if label == COVERAGE_REJECTED_ONLY:
-        return (
-            f"Confirm {ref} is intentionally omitted; its only entry is"
-            " rejected."
-        )
+        return f"Confirm {ref} is intentionally omitted; its only entry is rejected."
     if label == COVERAGE_INTERNAL_ONLY:
         return (
             f"{ref} is only covered by internal entries; expose an accepted"
@@ -196,9 +183,7 @@ def build_release_review(
     """
     workspace_root = workspace_root.expanduser().resolve()
     release = load_release(workspace_root, version)
-    statuses = tuple(
-        normalize_entry_status(value) for value in include_statuses
-    )
+    statuses = tuple(normalize_entry_status(value) for value in include_statuses)
     entries = load_entries(workspace_root, version)
 
     # 1. Release payload.
@@ -291,9 +276,7 @@ def build_release_review(
     )
     # Coverage is satisfied when every expected ref is covered; with no
     # expected refs, coverage is trivially satisfied.
-    coverage_ok = all(
-        row["status"] == COVERAGE_COVERED for row in coverage
-    )
+    coverage_ok = all(row["status"] == COVERAGE_COVERED for row in coverage)
     lint_ok = lint_summary["errors"] == 0
     changelog_ok = bool(changelog_block.get("dry_run_ok", False))
 
@@ -309,25 +292,18 @@ def build_release_review(
     # 8. Deterministic recommendations.
     recommendations: list[str] = []
     for row in coverage:
-        rec = _coverage_recommendation(
-            str(row["source_ref"]), str(row["status"])
-        )
+        rec = _coverage_recommendation(str(row["source_ref"]), str(row["status"]))
         if rec is not None:
             recommendations.append(rec)
     for orphan in orphans:
         recommendations.append(
-            f"Add source refs or provenance to orphan entry"
-            f" {orphan['entry_id']}."
+            f"Add source refs or provenance to orphan entry {orphan['entry_id']}."
         )
     if not lint_ok:
-        recommendations.append(
-            f"Fix {lint_summary['errors']} entry lint error(s)."
-        )
+        recommendations.append(f"Fix {lint_summary['errors']} entry lint error(s).")
     if strict and not changelog_ok:
         reason = str(changelog_block.get("reason") or "changelog build")
-        recommendations.append(
-            f"Resolve strict changelog build failure: {reason}."
-        )
+        recommendations.append(f"Resolve strict changelog build failure: {reason}.")
 
     return {
         "kind": "release_review",

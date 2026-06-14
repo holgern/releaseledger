@@ -254,8 +254,7 @@ Rules:
    intentional; confirm before re-adding.
 3. Orphan accepted entries (no `source_refs`, `issues`, `prs`, or `sources`)
    should get provenance or be removed.
-4. `--strict` exits non-zero when the release is not OK. It mirrors `build
-   --strict`, so it can fail on uncovered refs, lint errors, a missing release
+4. `--strict` exits non-zero when the release is not OK. It mirrors `build --strict`, so it can fail on uncovered refs, lint errors, a missing release
    date in Keep a Changelog mode, or other build blockers. Review alone never
    writes the changelog.
 5. Do not infer "already added" from a changed file path or a Git hash alone.

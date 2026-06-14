@@ -276,9 +276,7 @@ def release_from_dict(data: dict[str, object]) -> ReleaseRecord:
             data.get("previous_version"), "previous_version"
         ),
         canceled_at=_require_optional_str(data.get("canceled_at"), "canceled_at"),
-        cancel_reason=_require_optional_str(
-            data.get("cancel_reason"), "cancel_reason"
-        ),
+        cancel_reason=_require_optional_str(data.get("cancel_reason"), "cancel_reason"),
         superseded_by=_require_optional_release_version(
             data.get("superseded_by"), "superseded_by"
         ),
