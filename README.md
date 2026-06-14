@@ -1,3 +1,7 @@
+[![PyPI - Version](https://img.shields.io/pypi/v/releaseledger)](https://pypi.org/project/releaseledger/)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/releaseledger)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/releaseledger)
+
 # releaseledger
 
 Project-local release management for coding workflows.
@@ -90,14 +94,14 @@ renders and inserts the final changelog section.
 
 ## Core concepts
 
-| Concept | Meaning |
-| --- | --- |
-| Release | A versioned release record with status, optional previous version, source boundary, and changelog target. |
-| Entry | One release-note item attached to a release. Entries are grouped by kind for changelog output. |
-| Event | Append-only JSONL audit row written after each mutation. |
-| Index | Deterministic JSON summary rebuilt after mutations for fast inspection. |
-| Ledger ref | Branch-scoped namespace, defaulting to `main`. |
-| Global source ref | External provenance token such as `tl:task-0103`; releaseledger records it but does not resolve it. |
+| Concept           | Meaning                                                                                                   |
+| ----------------- | --------------------------------------------------------------------------------------------------------- |
+| Release           | A versioned release record with status, optional previous version, source boundary, and changelog target. |
+| Entry             | One release-note item attached to a release. Entries are grouped by kind for changelog output.            |
+| Event             | Append-only JSONL audit row written after each mutation.                                                  |
+| Index             | Deterministic JSON summary rebuilt after mutations for fast inspection.                                   |
+| Ledger ref        | Branch-scoped namespace, defaulting to `main`.                                                            |
+| Global source ref | External provenance token such as `tl:task-0103`; releaseledger records it but does not resolve it.       |
 
 Release statuses are `planned`, `draft`, `candidate`, `released`, and `yanked`.
 Entry statuses are `draft`, `accepted`, and `rejected`. Builds include accepted
