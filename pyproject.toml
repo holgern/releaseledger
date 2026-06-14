@@ -69,11 +69,17 @@ dev = [
     "pytest",
     "pytest-xdist",
     "ruff",
+    "sphinx",
+    "sphinx-rtd-theme",
     "twine",
     "types-PyYAML",
 ]
 rich = [
     "rich",
+]
+docs = [
+    "sphinx",
+    "sphinx-rtd-theme",
 ]
 
 [tool.setuptools_scm]

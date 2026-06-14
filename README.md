@@ -2,234 +2,426 @@
 
 Project-local release management for coding workflows.
 
-`releaseledger` is a standalone, branch-scoped release-state ledger. It tracks
-releases, changelog entries, events, and indexes under a `.releaseledger/`
-directory configured by `.releaseledger.toml`. It reuses primitives from
-[`ledgercore`](https://github.com/holgern/ledgercore) and does **not** depend on
-`taskledger`.
+`releaseledger` is a standalone release-state ledger for Python projects and
+other source repositories. It records releases, release-note entries, audit
+events, and JSON indexes in a deterministic file layout. It can also render
+reviewable changelog context and write final `CHANGELOG.md` sections from
+releaseledger entries.
 
-- Release records are stored as Markdown-with-front-matter bundles:
-  `.releaseledger/ledgers/<ledger_ref>/releases/<version>/release.md`.
-- Changelog entries live alongside: `releases/<version>/entries/entry-NNNN.md`.
-- Every mutation appends a JSONL event and rebuilds JSON indexes.
-- `--json` envelopes are deterministic (sorted keys, trailing newline).
+Releaseledger reuses [`ledgercore`](https://github.com/holgern/ledgercore) for
+typed file-storage primitives. It does not import `taskledger`, inspect
+`.taskledger/`, or validate task state. Cross-ledger provenance is represented
+only as explicit refs such as `tl:task-0103`.
 
-## Quickstart
+## What releaseledger stores
 
-```bash
-releaseledger init
-releaseledger release create 1.2.0 --title "Release 1.2.0" \
-  --boundary-ref tl:task-0105 --source-ref tl:task-0103
-releaseledger entry add 1.2.0 --kind added \
-  --summary "Added release bundle storage" --status accepted \
-  --source-ref tl:task-0103
-releaseledger entry lint 1.2.0 --strict
-releaseledger changelog 1.2.0 --target-changelog CHANGELOG.md --release-date 2026-06-13
-releaseledger build 1.2.0 --dry-run --strict --target-file CHANGELOG.md
-```
-
-`changelog` produces source/context for review or drafting; `build` writes the
-final `CHANGELOG.md` section. Build CHANGELOG.md:
-
-```bash
-releaseledger changelog 1.2.0 --format json
-releaseledger build 1.2.0 --dry-run --target-file CHANGELOG.md
-releaseledger build 1.2.0 --release-date 2026-06-13 --target-file CHANGELOG.md
-```
-
-After `init` you get a `.releaseledger.toml` and a `.releaseledger/` layout:
+After `releaseledger init`, a project has a `.releaseledger.toml` config file and
+a state directory, usually `.releaseledger/`:
 
 ```text
 .releaseledger/
   ledgers/
     main/
-      releases/      # one bundle per version (release.md + entries/)
-      events/        # events.jsonl audit log
-      indexes/       # releases.json, entries.json
+      releases/
+        1.2.0/
+          release.md
+          entries/
+            entry-0001.md
+      events/
+        events.jsonl
+      indexes/
+        releases.json
+        entries.json
 ```
+
+Release records and entries are Markdown files with YAML front matter. Every
+mutation appends an event to `events.jsonl` and rebuilds the JSON indexes.
+
+## Install
+
+```bash
+python -m pip install releaseledger
+```
+
+For local development:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+The package exposes the console command `releaseledger` and supports
+`python -m releaseledger`.
+
+## Quickstart
+
+```bash
+releaseledger init
+
+releaseledger release create 1.2.0 \
+  --title "Release 1.2.0" \
+  --boundary-ref tl:task-0105 \
+  --source-ref tl:task-0103
+
+releaseledger entry add 1.2.0 \
+  --kind added \
+  --summary "Added release bundle storage" \
+  --status accepted \
+  --source-ref tl:task-0103
+
+releaseledger entry lint 1.2.0 --strict
+
+releaseledger changelog 1.2.0 \
+  --target-changelog CHANGELOG.md \
+  --release-date 2026-06-13
+
+releaseledger build 1.2.0 \
+  --dry-run \
+  --strict \
+  --target-file CHANGELOG.md
+
+releaseledger build 1.2.0 \
+  --release-date 2026-06-13 \
+  --strict \
+  --target-file CHANGELOG.md
+```
+
+`changelog` produces agent-facing context for review or drafting. `build`
+renders and inserts the final changelog section.
+
+## Core concepts
+
+| Concept | Meaning |
+| --- | --- |
+| Release | A versioned release record with status, optional previous version, source boundary, and changelog target. |
+| Entry | One release-note item attached to a release. Entries are grouped by kind for changelog output. |
+| Event | Append-only JSONL audit row written after each mutation. |
+| Index | Deterministic JSON summary rebuilt after mutations for fast inspection. |
+| Ledger ref | Branch-scoped namespace, defaulting to `main`. |
+| Global source ref | External provenance token such as `tl:task-0103`; releaseledger records it but does not resolve it. |
+
+Release statuses are `planned`, `draft`, `candidate`, `released`, and `yanked`.
+Entry statuses are `draft`, `accepted`, and `rejected`. Builds include accepted
+entries by default.
+
+Entry kinds are `added`, `changed`, `fixed`, `removed`, `deprecated`,
+`security`, `docs`, `quality`, and `internal`. `documentation` and `doc` are
+accepted aliases for `docs`.
 
 ## Commands
 
 ```text
-releaseledger init [--releaseledger-dir .releaseledger] [--project-name NAME]
+releaseledger init [--releaseledger-dir PATH] [--project-name NAME]
                   [--external-dir] [--force]
-releaseledger release create VERSION [--title TEXT] [--status planned|draft|candidate|released]
-                                     [--previous VERSION] [--note TEXT] [--changelog-file PATH]
-                                     [--released-at YYYY-MM-DD] [--boundary-ref REF]
-                                     [--source-ref REF]... [--source-count N]
-releaseledger release update VERSION [--title TEXT] [--status STATUS] [--previous VERSION]
-                                     [--note TEXT] [--changelog-file PATH]
-                                     [--boundary-ref REF] [--source-ref REF]... [--source-count N]
-releaseledger release tag VERSION [--previous VERSION] [--note TEXT] [--changelog-file PATH]
-                                  [--released-at YYYY-MM-DD] [--boundary-ref REF]
-                                  [--source-ref REF]... [--source-count N]
-releaseledger release finalize VERSION [--released-at YYYY-MM-DD] [--changelog-file PATH]
+
+releaseledger release create VERSION [--title TEXT] [--status STATUS]
+                                     [--previous VERSION] [--note TEXT]
+                                     [--changelog-file PATH]
+                                     [--released-at YYYY-MM-DD]
+                                     [--boundary-ref REF]
+                                     [--source-ref REF]...
+                                     [--source-count N]
+releaseledger release update VERSION [same metadata options]
+releaseledger release tag VERSION [release metadata options]
+releaseledger release finalize VERSION [--released-at YYYY-MM-DD]
+                                       [--changelog-file PATH]
 releaseledger release list
 releaseledger release show VERSION
+
 releaseledger entry add VERSION --kind KIND --summary TEXT [--body TEXT]
-                               [--status draft|accepted|rejected] [--audience TEXT]
-                               [--scope SCOPE]... [--source-ref REF]... [--dry-run]
+                               [--status STATUS] [--audience TEXT]
+                               [--scope SCOPE]... [--source-ref REF]...
                                [--path PATH]... [--issue REF]... [--pr REF]...
-                               [--breaking] [--internal]
+                               [--breaking] [--internal] [--dry-run]
 releaseledger entry add-many VERSION --file FILE [--dry-run]
-releaseledger entry update VERSION ENTRY_ID [entry field options]
+releaseledger entry update VERSION ENTRY_ID [entry metadata options]
 releaseledger entry show VERSION ENTRY_ID
-releaseledger entry import VERSION --file FILE [--replace] [--source-ledger LEDGER]
+releaseledger entry import VERSION --file FILE [--replace]
+                                   [--source-ledger LEDGER]
 releaseledger entry list VERSION
 releaseledger entry lint VERSION [--strict] [--include-status STATUS]...
-releaseledger entry prompt VERSION [--source-ref REF]... [--context-file FILE]
-                                   [--format markdown|json] [--output PATH]
+releaseledger entry prompt VERSION [--source-ref REF]...
+                                   [--context-file FILE]
+                                   [--format markdown|json]
+                                   [--output PATH]
+
 releaseledger changelog VERSION [--format markdown|json] [--output PATH]
-                                [--include-internal] [--target-changelog PATH]
+                                [--include-internal]
+                                [--target-changelog PATH]
                                 [--release-date YYYY-MM-DD]
+                                [--include-sources]
                                 [--include-status STATUS]... [--lint]
-releaseledger build VERSION [--target-file CHANGELOG.md] [--release-date YYYY-MM-DD]
-                            [--unreleased] [--include-internal] [--dry-run]
-                            [--replace-existing] [--format markdown|json]
-                            [--include-status STATUS]... [--strict] [--allow-empty]
+
+releaseledger build VERSION [--target-file PATH]
+                            [--release-date YYYY-MM-DD]
+                            [--unreleased]
+                            [--include-internal]
+                            [--template NAME]
+                            [--dry-run]
+                            [--replace-existing]
+                            [--format markdown|json]
+                            [--include-status STATUS]...
+                            [--strict]
+                            [--allow-empty]
+
 releaseledger storage where
 releaseledger config show
 releaseledger config set releaseledger_dir PATH [--external-dir]
 ```
 
-Entry kinds: `added`, `changed`, `fixed`, `removed`, `deprecated`, `security`,
-`docs`, `quality`, `internal`. `documentation` and `doc` are accepted aliases
-for canonical `docs`. Entry statuses are `draft`, `accepted`, and `rejected`;
-builds include only accepted entries by default.
+Root options:
+
+```text
+releaseledger --cwd PATH ...
+releaseledger --json ...
+releaseledger --version
+```
+
+## Batch entries
+
+`entry add-many` reads YAML with a top-level `entries` list:
+
+```yaml
+entries:
+  - kind: added
+    summary: Added release bundle storage
+    body: >-
+      The storage layer now writes release records, entries, events, and indexes.
+    status: accepted
+    audience: developer
+    scopes: [storage]
+    source_refs: [tl:task-0103]
+    paths:
+      - releaseledger/storage/store.py
+    issues: []
+    prs: []
+    breaking: false
+    internal: false
+```
+
+Run a dry run before writing:
+
+```bash
+releaseledger entry add-many 1.2.0 --file /tmp/1.2.0-entries.yaml --dry-run
+releaseledger entry add-many 1.2.0 --file /tmp/1.2.0-entries.yaml
+```
+
+## Changelog generation
+
+There are two changelog commands:
+
+`releaseledger changelog` builds review context. It is useful for coding agents
+or humans who need to inspect release metadata, included entries, target file
+guidance, and lint findings before writing final prose. Add
+`--include-sources` when the Markdown output should show provenance refs.
+
+`releaseledger build` renders the final section from `[changelog]` config and
+inserts it into the target file. It can run in `--dry-run` mode, replace an
+existing release section with `--replace-existing`, or render an unreleased date
+with `--unreleased`. Use `--template NAME` to select a named changelog template
+profile.
+
+Default `.releaseledger.toml` changelog template:
+
+```toml
+[changelog]
+output = "CHANGELOG.md"
+trim = true
+render_always = false
+header = ""
+body = """
+## {% if release.date %}[{{ release.version }}] - {{ release.date }}{% else %}[{{ release.version }}] - Unreleased{% endif %}
+
+{% for group in groups %}
+### {{ group.title }}
+{% for entry in group.entries %}
+- {% if entry.breaking %}**BREAKING:** {% endif %}{{ entry.summary }}
+{% endfor %}
+
+{% endfor %}
+"""
+footer = "<!-- generated by releaseledger -->"
+postprocessors = []
+```
+
+Templates run in a sandboxed Jinja2 environment and may access `project`,
+`release`, `entries`, `groups`, and `releases`. Postprocessors are literal
+string replacements:
+
+```toml
+postprocessors = [
+  { pattern = "releaseledger", replace = "Releaseledger" },
+]
+```
 
 ## Cross-ledger provenance
 
-Releaseledger remains standalone. It never imports taskledger, reads
-`.taskledger/`, or validates external task state. Link externally gathered
-evidence with canonical global refs:
+Releaseledger is intentionally standalone. To link work from another tool,
+export that tool's evidence and pass it as opaque context:
 
 ```bash
 taskledger task show task-0103 --json > /tmp/task-0103.json
-releaseledger entry prompt 1.2.0 --source-ref tl:task-0103 \
-  --context-file /tmp/task-0103.json --output /tmp/entry-prompt.md
+
+releaseledger entry prompt 1.2.0 \
+  --source-ref tl:task-0103 \
+  --context-file /tmp/task-0103.json \
+  --output /tmp/entry-prompt.md
+
 releaseledger entry add-many 1.2.0 --file /tmp/1.2.0-entries.yaml --dry-run
 releaseledger entry add-many 1.2.0 --file /tmp/1.2.0-entries.yaml
 releaseledger entry lint 1.2.0 --strict
 releaseledger build 1.2.0 --dry-run --strict --target-file CHANGELOG.md
 ```
 
-Root options: `--cwd PATH` (run as if started from `PATH`; the project is
-discovered upward), `--json` (emit JSON envelopes), `--version`.
+The prompt command tells the drafting agent to use only releaseledger metadata,
+explicit source refs, and caller-supplied context.
 
 ## JSON envelopes
 
-Success:
+Use `--json` for deterministic machine-readable output.
+
+Success envelope:
 
 ```json
 {
-  "ok": true,
   "command": "release.tag",
-  "result_type": "release",
+  "events": ["event-0001"],
+  "ok": true,
   "result": {
+    "events": ["event-0001"],
     "kind": "release",
     "ledger_ref": "main",
-    "release": { "version": "1.2.0", "status": "released", "...": "..." },
-    "events": ["event-0001"]
+    "release": {
+      "status": "released",
+      "version": "1.2.0"
+    }
   },
-  "events": ["event-0001"]
+  "result_type": "release"
 }
 ```
 
-Error (machine codes: `USAGE_ERROR`, `NOT_FOUND`, `CONFIG_ERROR`,
-`VALIDATION_ERROR`, `CONFLICT`):
+Error envelope:
 
 ```json
 {
-  "ok": false,
   "command": "release.tag",
   "error": {
     "code": "USAGE_ERROR",
-    "message": "Release version already exists: 1.2.0",
     "exit_code": 2,
+    "message": "Release version already exists: 1.2.0",
     "remediation": ["Run `releaseledger release show 1.2.0`."]
-  }
+  },
+  "ok": false
 }
 ```
 
-## Python API
+Common error codes are `USAGE_ERROR`, `NOT_FOUND`, `CONFIG_ERROR`,
+`VALIDATION_ERROR`, and `CONFLICT`.
 
-A narrow, stable surface is re-exported from `releaseledger.api`:
+## Configuration
 
-```python
-from releaseledger.api.releases import create_release, update_release, show_release
-from releaseledger.api.entries import (
-    add_release_entry,
-    add_many_release_entries,
-    update_release_entry,
-    lint_release_entries,
-    build_entry_prompt,
-)
-from releaseledger.api.changelog import build_changelog_file, render_changelog_section
-from releaseledger.api.config import (
-    load_project_locator,
-    render_default_releaseledger_toml,
-    storage_where,
-    config_show,
-    config_set_releaseledger_dir,
-)
-```
-
-Services return plain dict payloads and raise `releaseledger.errors.LaunchError`
-on failure; they never print or call `typer.Exit`.
-
-## External state configuration
-
-By default, releaseledger stores state in a `.releaseledger/` directory inside
-the workspace. Projects that use a consolidated sibling state repository can
-configure an external directory with a portable relative path:
+Default local state:
 
 ```toml
 # .releaseledger.toml
+config_version = 1
+releaseledger_dir = ".releaseledger"
+
+ledger_ref = "main"
+ledger_parent_ref = ""
+ledger_next_entry_number = 1
+ledger_branch_guard = "off"
+
+[ledger]
+code = "rl"
+name = "releaseledger"
+
+[release]
+default_changelog = "CHANGELOG.md"
+default_status = "planned"
+allow_dirty_worktree = true
+```
+
+Projects that keep generated state in a sibling repository can opt in to an
+external relative path:
+
+```toml
 releaseledger_dir = "../ledger/release/releaseledger"
 releaseledger_dir_policy = "external"
 ```
 
-To set this via the CLI:
+The CLI equivalent is:
 
 ```bash
-releaseledger init --releaseledger-dir ../ledger/release/releaseledger --external-dir
-# or for an existing project:
-releaseledger config set releaseledger_dir ../ledger/release/releaseledger --external-dir
+releaseledger init \
+  --releaseledger-dir ../ledger/release/releaseledger \
+  --external-dir
+
+releaseledger config set releaseledger_dir \
+  ../ledger/release/releaseledger \
+  --external-dir
 ```
 
-Relative paths that escape the workspace root are rejected unless
-`releaseledger_dir_policy` is set to `"external"` or `--external-dir` is passed.
-Absolute paths are accepted for backward compatibility but are not portable.
+Relative paths that escape the workspace are rejected unless the external policy
+is explicit. Absolute paths are accepted for compatibility but are not portable.
 
 ## Storage diagnostics
 
-Use `storage where` to inspect the effective storage location, layout health,
-and config source without mutating state:
+Inspect effective paths and layout health without mutating state:
 
 ```bash
 releaseledger storage where
 releaseledger --json storage where
-```
-
-Human output example:
-
-```text
-Workspace: /home/user/project
-Config: /home/user/project/.releaseledger.toml
-Storage: /home/user/project/.releaseledger
-Ledger: main
-Inside workspace: yes
-Source: dotfile
-Layout: ok
-Indexes: ok
-```
-
-Use `config show` to inspect the validated configuration and resolved paths:
-
-```bash
 releaseledger config show
 releaseledger --json config show
 ```
+
+Human output from `storage where` includes workspace, config path, storage path,
+ledger ref, workspace containment, config source, layout status, and index
+status.
+
+## Python API
+
+The public API is intentionally narrow and re-exported from `releaseledger.api`:
+
+```python
+from releaseledger.api.releases import (
+    create_release,
+    finalize_release,
+    list_release_records,
+    show_release,
+    tag_release,
+    update_release,
+)
+from releaseledger.api.entries import (
+    add_many_release_entries,
+    add_release_entry,
+    build_entry_prompt,
+    import_release_entry_file,
+    lint_release_entries,
+    list_release_entries,
+    show_release_entry,
+    update_release_entry,
+)
+from releaseledger.api.changelog import (
+    build_changelog_context,
+    build_changelog_file,
+    render_changelog_section,
+)
+from releaseledger.api.config import (
+    config_set_releaseledger_dir,
+    config_show,
+    discover_workspace_root,
+    load_project_config,
+    load_project_locator,
+    render_default_releaseledger_toml,
+    require_project,
+    storage_where,
+)
+```
+
+Service functions return plain dictionaries or strings and raise
+`releaseledger.errors.LaunchError` for user-facing failures. They do not print
+or call `typer.Exit`.
 
 ## Development
 
@@ -239,6 +431,13 @@ pytest -q
 ruff check .
 mypy releaseledger
 python -m build
+```
+
+Build documentation:
+
+```bash
+python -m pip install -e ".[docs]"
+sphinx-build -b html docs docs/_build/html
 ```
 
 The project ships `py.typed` and targets Python 3.10+.
