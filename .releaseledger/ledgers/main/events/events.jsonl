@@ -26,3 +26,5 @@
 {"data":{"fields":["kind"]},"entry_id":"entry-0023","event":"entry.updated","event_id":"event-0026","record_revisions":{"entry:0.1.0/entry-0023":3},"release_version":"0.1.0","schema_version":2}
 {"data":{"fields":["kind"]},"entry_id":"entry-0011","event":"entry.updated","event_id":"event-0027","record_revisions":{"entry:0.2.0/entry-0011":3},"release_version":"0.2.0","schema_version":2}
 {"data":{"fields":["status"]},"entry_id":"entry-0012","event":"entry.updated","event_id":"event-0028","record_revisions":{"entry:0.2.0/entry-0012":3},"release_version":"0.2.0","schema_version":2}
+{"data":{"fields":["released_at"]},"event":"release.updated","event_id":"event-0029","record_revisions":{"release:0.3.0":4},"release_version":"0.3.0","schema_version":2}
+{"data":{"released_at":"2026-06-15"},"event":"release.finalized","event_id":"event-0030","record_revisions":{"release:0.3.0":5},"release_version":"0.3.0","schema_version":2}

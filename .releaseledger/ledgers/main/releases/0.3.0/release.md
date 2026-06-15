@@ -3,11 +3,11 @@ schema_version: 2
 object_type: release
 versioning:
   schema_version: 1
-  revision: 3
+  revision: 5
 version: 0.3.0
-status: planned
+status: released
 title: Release 0.3.0
-released_at: null
+released_at: "2026-06-15"
 previous_version: 0.2.0
 cancel_reason: null
 superseded_by: null
