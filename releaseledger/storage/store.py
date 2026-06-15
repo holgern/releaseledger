@@ -53,6 +53,7 @@ __all__ = [
     "release_markdown_path",
     "rename_release_bundle",
     "save_entries_for_release",
+    "delete_entry",
     "save_entry",
     "save_release",
     "validate_release_version",
@@ -277,6 +278,21 @@ def save_entry(workspace_root: Path, entry: ReleaseEntryRecord) -> ReleaseEntryR
     )
     return entry
 
+
+def delete_entry(
+    workspace_root: Path, release_version: str, entry_id: str
+) -> None:
+    """Delete an entry file if it exists; used to roll back partial writes.
+
+    Safe to call when no file is present. Does not touch the release record or
+    indexes; callers perform rollback immediately after a failed release save,
+    before the entry was counted or indexed.
+    """
+    paths = _resolve(workspace_root)
+    safe_version = validate_release_version(release_version)
+    target = _entries_dir(paths, safe_version) / f"{entry_id}.md"
+    if target.is_file():
+        target.unlink()
 
 def load_entries(
     workspace_root: Path, release_version: str

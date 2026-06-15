@@ -54,6 +54,7 @@ from releaseledger.services.entry_prompt import build_entry_prompt
 from releaseledger.services.git_sources import (
     GIT_DEFAULT_HEAD,
     GIT_DEFAULT_INCLUDE_MERGES,
+    GitSourceCandidate,
     collect_git_candidates,
     resolve_git_ref,
 )
@@ -1614,6 +1615,13 @@ def git_range_command(
             help="Merge policy: never, always, nontrivial (default nontrivial).",
         ),
     ] = GIT_DEFAULT_INCLUDE_MERGES,
+    evidence: Annotated[
+        bool,
+        typer.Option(
+            "--evidence",
+            help="Emit per-commit evidence (paths, additions, deletions, refs, diff).",
+        ),
+    ] = False,
 ) -> None:
     """Inspect the git commit range for a release (or preview with 'next').
 
@@ -1643,6 +1651,7 @@ def git_range_command(
             base=base,
             head=head,
             include_merges=include_merges,
+            evidence=evidence,
         )
         return
 
@@ -1669,7 +1678,28 @@ def git_range_command(
         base=use_base,
         head=use_head or GIT_DEFAULT_HEAD,
         include_merges=include_merges,
+        evidence=evidence,
     )
+
+
+def _candidate_payload(c: GitSourceCandidate, *, evidence: bool) -> dict[str, object]:
+    """Build a git-range candidate dict, optionally with full evidence."""
+    payload: dict[str, object] = {
+        "sha": c.sha,
+        "short_sha": c.short_sha,
+        "source_ref": c.source_ref,
+        "inferred_kind": c.inferred_kind,
+        "subject": c.subject,
+    }
+    if not evidence:
+        return payload
+    payload["paths"] = list(c.paths)
+    payload["additions"] = c.additions
+    payload["deletions"] = c.deletions
+    payload["pr_refs"] = list(c.pr_refs)
+    payload["issue_refs"] = list(c.issue_refs)
+    payload["diff_excerpt"] = c.diff_excerpt
+    return payload
 
 
 def _run_git_range(
@@ -1680,6 +1710,7 @@ def _run_git_range(
     base: str,
     head: str,
     include_merges: str,
+    evidence: bool = False,
 ) -> None:
     """Render a git range scan (human + JSON)."""
     try:
@@ -1720,14 +1751,7 @@ def _run_git_range(
         "candidate_count": len(candidates),
         "include_merges": include_merges,
         "candidates": [
-            {
-                "sha": c.sha,
-                "short_sha": c.short_sha,
-                "source_ref": c.source_ref,
-                "inferred_kind": c.inferred_kind,
-                "subject": c.subject,
-            }
-            for c in candidates
+            _candidate_payload(c, evidence=evidence) for c in candidates
         ],
     }
     if state.json_output:
@@ -1749,7 +1773,26 @@ def _run_git_range(
     lines.append("")
     lines.append("Candidates:")
     for c in candidates:
-        lines.append(f"  {c.source_ref:<52} {c.inferred_kind:<12} {c.subject[:72]}")
+        lines.append(
+            f"  {c.source_ref:<52} {c.inferred_kind:<12} {c.subject[:72]}"
+        )
+        if evidence:
+            paths_line = ", ".join(c.paths[:6]) + ("  ..." if len(c.paths) > 6 else "")
+            lines.append(f"    paths: {len(c.paths)}  {paths_line}")
+            add_del = ""
+            if c.additions is not None or c.deletions is not None:
+                add_del = f"  +{c.additions or 0}/-{c.deletions or 0}"
+            refs: list[str] = []
+            refs.extend(f"pr:{ref}" for ref in c.pr_refs)
+            refs.extend(f"issue:{ref}" for ref in c.issue_refs)
+            tail = add_del
+            if refs:
+                tail += ("  " if add_del else "") + " ".join(refs)
+            if tail:
+                lines.append(f"    evidence:{tail}")
+            if c.diff_excerpt:
+                excerpt = c.diff_excerpt.replace("\n", " ")[:120]
+                lines.append(f"    diff: {excerpt}")
     typer.echo("\n".join(lines))
 
 

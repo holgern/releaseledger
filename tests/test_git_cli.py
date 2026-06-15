@@ -149,6 +149,58 @@ def test_git_range_json(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------
+# git range --evidence
+# --------------------------------------------------------------------------
+
+
+def test_git_range_evidence_json_includes_full_fields(tmp_path: Path) -> None:
+    repo, sha_a, sha_b = _setup_release(tmp_path)
+    data = _jrun(repo, "git", "range", "0.2.0", "--evidence")
+    assert data["ok"] is True
+    candidates = data["result"]["candidates"]
+    assert len(candidates) == 2
+    by_ref = {c["source_ref"]: c for c in candidates}
+    cand_a = by_ref[f"git:{sha_a}"]
+    # Evidence-only fields must be present and populated.
+    for field in ("paths", "additions", "deletions", "pr_refs", "issue_refs"):
+        assert field in cand_a, f"missing evidence field: {field}"
+    assert isinstance(cand_a["paths"], list)
+    assert "a.txt" in cand_a["paths"]
+    assert cand_a["additions"] is not None and cand_a["additions"] >= 1
+    assert cand_a["deletions"] is not None and cand_a["deletions"] >= 0
+    assert cand_a["pr_refs"] == []
+    assert cand_a["issue_refs"] == []
+    # diff_excerpt is optional in the dataclass but populated for real diffs.
+    assert cand_a["diff_excerpt"] is None or isinstance(cand_a["diff_excerpt"], str)
+
+
+def test_git_range_evidence_human_output_marks_evidence(tmp_path: Path) -> None:
+    repo, sha_a, sha_b = _setup_release(tmp_path)
+    result = runner.invoke(
+        app,
+        ["--cwd", str(repo), "git", "range", "0.2.0", "--evidence"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "evidence:" in result.output
+    assert "paths:" in result.output
+
+
+def test_git_range_without_evidence_omits_fields(tmp_path: Path) -> None:
+    repo, sha_a, sha_b = _setup_release(tmp_path)
+    data = _jrun(repo, "git", "range", "0.2.0")
+    candidates = data["result"]["candidates"]
+    cand = candidates[0]
+    # Default view keeps the compact fields only.
+    assert set(cand.keys()) == {
+        "sha",
+        "short_sha",
+        "source_ref",
+        "inferred_kind",
+        "subject",
+    }
+
+
+# --------------------------------------------------------------------------
 # git range next
 # --------------------------------------------------------------------------
 

@@ -30,6 +30,7 @@ from releaseledger.errors import (
 from releaseledger.services.events import append_event
 from releaseledger.storage.paths import resolve_project_paths
 from releaseledger.storage.store import (
+    delete_entry,
     load_entries,
     load_release,
     rebuild_indexes,
@@ -241,11 +242,18 @@ def add_release_entry(
         entry_count=len(entries) + 1,
         versioning=bump_versioning(release.versioning),
     )
-    save_release(
-        workspace_root,
-        updated_release,
-        overwrite=True,
-    )
+    try:
+        save_release(
+            workspace_root,
+            updated_release,
+            overwrite=True,
+        )
+    except LaunchError:
+        # Roll back the orphan entry file so a stale release revision
+        # cannot leave a partial write: no entry-*.md and entry_count
+        # is never bumped.
+        delete_entry(workspace_root, release.version, record.entry_id)
+        raise
     event = append_event(
         workspace_root,
         event=EVENT_ENTRY_ADDED,
@@ -504,11 +512,17 @@ def import_release_entry_file(
             entry_count=len(entries) + 1,
             versioning=bump_versioning(release.versioning),
         )
-        save_release(
-            workspace_root,
-            updated_release,
-            overwrite=True,
-        )
+        try:
+            save_release(
+                workspace_root,
+                updated_release,
+                overwrite=True,
+            )
+        except LaunchError:
+            # Roll back the orphan entry file so a stale release revision
+            # cannot leave a partial write (new-entry path only).
+            delete_entry(workspace_root, release.version, record.entry_id)
+            raise
     record_revisions = {
         f"entry:{release_version}/{entry_id}": record.versioning.revision
     }
@@ -636,11 +650,18 @@ def add_many_release_entries(
             entry_count=len(existing) + len(proposed),
             versioning=bump_versioning(release.versioning),
         )
-        save_release(
-            workspace_root,
-            updated_release,
-            overwrite=True,
-        )
+        try:
+            save_release(
+                workspace_root,
+                updated_release,
+                overwrite=True,
+            )
+        except LaunchError:
+            # Roll back every just-written entry file so a stale release
+            # revision cannot leave orphan entries or a bumped entry_count.
+            for record in proposed:
+                delete_entry(workspace_root, release.version, record.entry_id)
+            raise
         event = append_event(
             workspace_root,
             event=EVENT_ENTRY_BATCH_ADDED,

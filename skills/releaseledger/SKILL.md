@@ -38,6 +38,7 @@ Releaseledger is separate from taskledger. Do not treat `.releaseledger/` as tas
 - Do not import taskledger, inspect `.taskledger/`, or dereference task refs.
   Accept taskledger evidence only as caller-supplied context and global refs.
 - Do not use git commit messages as changelog entries. Do not paste, paraphrase, title-case, or mechanically convert commit subjects into `summary` values. A commit message is only provenance for locating evidence.
+- Do not run multiple releaseledger mutating commands concurrently. Especially do not fan out `entry add` calls. Use `entry add-many ... --dry-run` followed by one `entry add-many`, or run single mutating commands sequentially and re-read state after any failure.
 
 ## Core agent command path
 
@@ -222,6 +223,9 @@ Rules:
 
 Use this when the user asks to build, generate, or update `CHANGELOG.md`.
 
+0. For a git-backed release, run a strict git coverage review immediately before any build:
+   `releaseledger review VERSION --git --git-base PREV_TAG --git-head HEAD --strict`.
+   If review reports missing `git:<sha>` coverage, uncovered expected refs, lint errors, or build blockers, stop and report the missing audit work. Do not build.
 1. Generate a strict dry run first:
    `releaseledger build VERSION --dry-run --strict --target-file CHANGELOG.md`.
 2. Inspect the rendered section:
@@ -281,41 +285,95 @@ Rules:
 
 ## Git-first workflow
 
-The recommended workflow uses git commit ranges as the canonical evidence:
+The recommended workflow uses git commit ranges as the canonical evidence. For any non-empty git range, the commit audit is mandatory, not optional.
+Every `include_by_default` commit must be inspected and accounted for before
+entries are accepted or `CHANGELOG.md` is built.
+
+Mandatory audit invariant:
+
+- Let `C` be the candidate commits returned by
+  `releaseledger --json git range VERSION --base PREV_TAG --head HEAD`.
+- Every `git:<sha>` in `C` must appear in exactly one curated entry's
+  `source_refs`, unless it is intentionally represented by a rejected/internal
+  entry with an explicit rationale.
+- One entry may cover multiple small commits, but it must preserve all covered
+  `git:<sha>` refs.
+- Aggregate `git log`, aggregate `git diff --stat`, tag dates, version bumps, or
+  package metadata changes are not sufficient review evidence.
+- `releaseledger git range` commit subjects are identity only. They prove which
+  commits exist; they do not prove the commit was reviewed and must not become
+  release prose.
+
+Workflow:
 
 ```bash
-# 1. Create release and attach git range.
+# 1. Create or update the release and attach the exact git range.
 releaseledger release create VERSION --previous PREV_VERSION --released-at YYYY-MM-DD
 releaseledger release update VERSION --git-base PREV_TAG --git-head HEAD
 
-# 2. Inspect the range for coverage only.
-releaseledger git range VERSION --base PREV_TAG --head HEAD
+# 2. Capture the range. JSON mode is preferred because it gives a machine list
+#    of source refs that can be audited.
+releaseledger --json git range VERSION --base PREV_TAG --head HEAD > /tmp/releaseledger-range.json
 
-# 3. Create a coverage scaffold only when useful. The scaffold is not release prose.
+# 3. Create a per-commit evidence directory and inspect every candidate commit.
+python - <<'PY'
+import json
+from pathlib import Path
+payload = json.loads(Path("/tmp/releaseledger-range.json").read_text())
+candidates = payload["result"]["candidates"]
+Path("/tmp/releaseledger-shas.txt").write_text(
+    "\n".join(c["sha"] for c in candidates) + "\n"
+)
+PY
+while read -r sha; do
+  git show --stat --patch --find-renames --find-copies --format=fuller "$sha"     > "/tmp/releaseledger-commit-${sha}.patch"
+done < /tmp/releaseledger-shas.txt
+```
+
+Create an audit worksheet before writing entries:
+
+```markdown
+| sha | paths inspected | public/API/docs behavior | decision | target entry |
+| --- | --- | --- | --- | --- |
+| <sha> | <paths> | <real effect from patch/tests/docs> | accept/internal/reject/group | <summary or entry id> |
+```
+
+Rules for the worksheet:
+
+1. There must be one row per candidate commit from the range.
+2. `paths inspected` must come from the patch/path evidence, not only from a
+   commit subject.
+3. `public/API/docs behavior` must describe the shipped behavior, compatibility
+   impact, CLI/config/docs effect, or state that the commit is internal-only.
+4. `decision` must be one of `accept`, `group`, `internal`, or `reject`.
+5. Version-only commits may be grouped or rejected only after checking the
+   actual patch and confirming no independent user-facing behavior changed.
+
+Then create and curate the entry batch:
+
+```bash
+# 4. Create a coverage scaffold. For a non-empty range this is mandatory.
 releaseledger git import VERSION --base PREV_TAG --head HEAD --status draft --output entries.yaml
 
-# 4. Rewrite entries.yaml manually: replace every blank or generated summary with
-#    a user-facing note based on diff/API/docs/tests. Never use commit subjects.
-#    Combine small commits and preserve all git:<sha> source_refs.
+# 5. Rewrite entries.yaml manually from the worksheet:
+#    - fill every summary from reviewed behavior, API/docs impact, tests, paths,
+#      and patch evidence
+#    - preserve every git:<sha> source_ref
+#    - combine related commits only by moving all relevant git:<sha> source_refs
+#      onto the combined entry
+#    - mark implementation-only work with internal: true or status: rejected
+#    - never use commit subjects as summaries
 
-# 5. Add entries only after the summaries are independently written.
+# 6. Validate atomically. Do not replace this with many parallel entry add calls.
 releaseledger entry add-many VERSION --file entries.yaml --dry-run
 releaseledger entry add-many VERSION --file entries.yaml
 
-# 6. Review git coverage.
-releaseledger review VERSION --git --strict
+# 7. Review git coverage. This is the gate before changelog build.
+releaseledger review VERSION --git --git-base PREV_TAG --git-head HEAD --strict
 
-# 7. Build changelog.
+# 8. Build only after strict review passes.
 releaseledger build VERSION --release-date YYYY-MM-DD --strict --target-file CHANGELOG.md
 ```
-
-Key rules:
-
-- One entry may cover multiple commits (combine tiny commits into one user-facing entry).
-- Preserve all `git:<sha>` source_refs on the combined entry.
-- Mark internal-only work with `internal: true`/`--internal` or `status: rejected`; do not rely on `kind: internal` alone.
-- If a commit exists but no task exists, inspect the diff and changed paths; then write a real release note or mark it internal/rejected.
-- Reject summaries that match or merely restyle commit subjects such as `update changelog`, `Update README`, `pre-commit`, `fix bug`, or `add review cmd`.
 
 Commit-message guard before `entry add-many`:
 
@@ -335,6 +393,15 @@ for i, entry in enumerate(batch.get("entries", []), 1):
         raise SystemExit(f"entry {i}: summary matches a commit subject: {summary!r}")
 PY
 ```
+
+No coverage, no build:
+
+- If `releaseledger review VERSION --git --strict` fails, do not run
+  `releaseledger build`.
+- If the user asks for a fast changelog and the range has not been audited,
+  produce the audit worksheet and stop before mutation.
+- If a commit cannot be understood from the patch, mark it draft/internal and
+  ask for project context instead of inventing a user-facing summary.
 
 ## Templating protocol
 
