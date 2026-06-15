@@ -1848,7 +1848,10 @@ def git_import_command(
     for c in candidates:
         entry: dict[str, object] = {
             "kind": c.inferred_kind,
-            "summary": c.inferred_summary,
+            # Summary is intentionally blank. `git import` is a coverage
+            # scaffold; changelog prose must be authored from reviewed evidence,
+            # not copied or inferred from commit subjects.
+            "summary": "",
             "status": status,
             "source_refs": [c.source_ref],
             "paths": list(c.paths),
@@ -1899,6 +1902,8 @@ def git_import_command(
     lines.append(f"  entries: {len(yaml_entries)} (status={status})")
     lines.append("")
     lines.append("Next steps:")
+    lines.append("  edit the YAML and write user-facing summaries from diffs/docs/tests")
+    lines.append("  do not copy or paraphrase git commit messages into summaries")
     lines.append(f"  releaseledger entry add-many {version} --file {output} --dry-run")
     lines.append(f"  releaseledger entry add-many {version} --file {output}")
     typer.echo("\n".join(lines))

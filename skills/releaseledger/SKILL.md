@@ -14,6 +14,8 @@ Use releaseledger when a project needs durable, project-local release state: rel
 
 Releaseledger is git-first. Git commit ranges are the canonical evidence of shipped changes. Taskledger, issue trackers, and PR descriptions are optional provenance.
 
+Git evidence is not changelog prose. A commit subject or body must never be copied, lightly edited, title-cased, or otherwise used as a release entry summary. Commit refs may identify coverage; release entry summaries must be written from reviewed behavior, public API/docs impact, changed paths, tests, and diff evidence.
+
 Releaseledger is separate from taskledger. Do not treat `.releaseledger/` as task state and do not require taskledger to be installed.
 
 ## Never do these things
@@ -35,6 +37,7 @@ Releaseledger is separate from taskledger. Do not treat `.releaseledger/` as tas
 - Do not treat generated changelog source as final prose unless the command requested a final build.
 - Do not import taskledger, inspect `.taskledger/`, or dereference task refs.
   Accept taskledger evidence only as caller-supplied context and global refs.
+- Do not use git commit messages as changelog entries. Do not paste, paraphrase, title-case, or mechanically convert commit subjects into `summary` values. A commit message is only provenance for locating evidence.
 
 ## Core agent command path
 
@@ -155,14 +158,16 @@ Use this when the user asks to add release-note material.
    `added`, `changed`, `fixed`, `removed`, `deprecated`, `security`, `docs`, `quality`, `internal`.
    `documentation` and `doc` normalize to `docs`.
 3. Keep summaries one line, user-facing, and free of trailing periods unless the project style requires punctuation.
-4. Use `--body` for longer explanation and `--path`, `--issue`, and `--pr` for traceability.
-5. Use `--breaking` for breaking changes.
-6. Use `--internal` only for implementation-only notes that should be hidden from public changelogs by default.
-7. Verify with:
+4. Write each summary from reviewed product behavior, API/docs impact, changed paths, tests, and diffs. Never derive it from a git commit subject/body.
+5. A valid summary should still make sense if all commit hashes and commit messages are hidden.
+6. Use `--body` for longer explanation and `--path`, `--issue`, and `--pr` for traceability.
+7. Use `--breaking` for breaking changes.
+8. Use `--internal` for implementation-only notes that should be hidden from public changelogs by default. `kind: internal` alone is not enough in Keep a Changelog mode because extended kinds can render under `Changed`; set `internal: true` or reject the entry.
+9. Verify with:
    `releaseledger entry list VERSION`.
-8. Use `--status accepted` for final notes, `draft` for incomplete notes, and
+10. Use `--status accepted` for final notes, `draft` for incomplete notes, and
    `rejected` for retained-but-excluded proposals.
-9. Link external evidence with `--source-ref tl:task-0103`; never make
+11. Link external evidence with `--source-ref tl:task-0103`; never make
    releaseledger inspect the external ledger.
 
 Example:
@@ -283,19 +288,24 @@ The recommended workflow uses git commit ranges as the canonical evidence:
 releaseledger release create VERSION --previous PREV_VERSION --released-at YYYY-MM-DD
 releaseledger release update VERSION --git-base PREV_TAG --git-head HEAD
 
-# 2. Generate candidate entries from commits.
+# 2. Inspect the range for coverage only.
+releaseledger git range VERSION --base PREV_TAG --head HEAD
+
+# 3. Create a coverage scaffold only when useful. The scaffold is not release prose.
 releaseledger git import VERSION --base PREV_TAG --head HEAD --status draft --output entries.yaml
 
-# 3. Edit entries.yaml: curate summaries, mark internal-only work, combine small commits.
+# 4. Rewrite entries.yaml manually: replace every blank or generated summary with
+#    a user-facing note based on diff/API/docs/tests. Never use commit subjects.
+#    Combine small commits and preserve all git:<sha> source_refs.
 
-# 4. Add entries.
+# 5. Add entries only after the summaries are independently written.
 releaseledger entry add-many VERSION --file entries.yaml --dry-run
 releaseledger entry add-many VERSION --file entries.yaml
 
-# 5. Review git coverage.
+# 6. Review git coverage.
 releaseledger review VERSION --git --strict
 
-# 6. Build changelog.
+# 7. Build changelog.
 releaseledger build VERSION --release-date YYYY-MM-DD --strict --target-file CHANGELOG.md
 ```
 
@@ -303,8 +313,28 @@ Key rules:
 
 - One entry may cover multiple commits (combine tiny commits into one user-facing entry).
 - Preserve all `git:<sha>` source_refs on the combined entry.
-- Mark internal-only work as internal or rejected.
-- If a commit exists but no task exists, include it or mark it internal/rejected.
+- Mark internal-only work with `internal: true`/`--internal` or `status: rejected`; do not rely on `kind: internal` alone.
+- If a commit exists but no task exists, inspect the diff and changed paths; then write a real release note or mark it internal/rejected.
+- Reject summaries that match or merely restyle commit subjects such as `update changelog`, `Update README`, `pre-commit`, `fix bug`, or `add review cmd`.
+
+Commit-message guard before `entry add-many`:
+
+```bash
+# Inspect commit subjects only to detect accidental leakage. Do not use them as prose.
+git log --format=%s PREV_TAG..HEAD > /tmp/releaseledger-commit-subjects.txt
+python - <<'PY'
+from pathlib import Path
+import yaml
+subjects = {line.strip().lower() for line in Path("/tmp/releaseledger-commit-subjects.txt").read_text().splitlines() if line.strip()}
+batch = yaml.safe_load(Path("entries.yaml").read_text())
+for i, entry in enumerate(batch.get("entries", []), 1):
+    summary = str(entry.get("summary", "")).strip().lower()
+    if not summary:
+        raise SystemExit(f"entry {i}: summary is blank")
+    if summary in subjects:
+        raise SystemExit(f"entry {i}: summary matches a commit subject: {summary!r}")
+PY
+```
 
 ## Templating protocol
 

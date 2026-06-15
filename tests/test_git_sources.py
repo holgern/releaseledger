@@ -301,7 +301,7 @@ def test_candidate_fields_are_populated(tmp_path: Path) -> None:
     assert cand.source_ref == f"git:{sha}"
     assert cand.subject == "feat(parser): add new token"
     assert cand.inferred_kind == "added"
-    assert cand.inferred_summary == "add new token"
+    assert cand.inferred_summary == ""
     assert cand.include_by_default is True
     assert "p.txt" in cand.paths
 

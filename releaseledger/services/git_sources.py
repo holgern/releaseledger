@@ -396,7 +396,9 @@ def _build_candidate(
     paths, additions, deletions = _changed_paths(workspace_root, sha)
     pr_refs, issue_refs = _extract_refs(meta.subject, meta.body)
     inferred_kind = _infer_kind(meta.subject)
-    inferred_summary = _infer_summary(meta.subject)
+    # Intentionally blank: commit subjects are evidence, not changelog prose.
+    # Agents must write release-entry summaries from reviewed behavior/diffs.
+    inferred_summary = ""
     diff_excerpt = _diff_excerpt(workspace_root, sha, max_diff_chars)
     return GitSourceCandidate(
         sha=sha,
@@ -580,13 +582,6 @@ def _infer_kind(subject: str) -> str:
     return "changed"
 
 
-def _infer_summary(subject: str) -> str:
-    """Strip a conventional-commit prefix to produce a candidate summary."""
-    text = subject.strip()
-    match = re.match(r"^([A-Za-z]+)(\([^)]+\))?(!)?:\s*(.*)$", text)
-    if match:
-        return match.group(4).strip() or text
-    return text
 
 
 def build_git_range_summary(

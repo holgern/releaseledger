@@ -227,7 +227,8 @@ def test_git_import_writes_entry_yaml(tmp_path: Path) -> None:
     assert f"git:{sha_b}" in all_src_refs
     for entry in batch["entries"]:
         assert entry["status"] == "draft"
-    # dry-run accepts the batch
+        assert entry["summary"] == ""
+    # dry-run rejects the scaffold until summaries are manually written
     result2 = runner.invoke(
         app,
         [
@@ -241,7 +242,8 @@ def test_git_import_writes_entry_yaml(tmp_path: Path) -> None:
             "--dry-run",
         ],  # noqa: E501
     )
-    assert result2.exit_code == 0, result2.output
+    assert result2.exit_code != 0
+    assert "Entry batch validation failed" in result2.output
 
 
 def test_git_import_next_no_release_required(tmp_path: Path) -> None:
