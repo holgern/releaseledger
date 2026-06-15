@@ -11,7 +11,7 @@ import datetime
 import re
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import ledgercore
 
@@ -30,6 +30,7 @@ from releaseledger.domain.release import (
 )
 from releaseledger.domain.source_ref import normalize_source_ref
 from releaseledger.domain.states import RELEASE_STATUSES
+from releaseledger.domain.versioning import bump_versioning
 from releaseledger.errors import (
     CODE_CONFLICT,
     CODE_USAGE_ERROR,
@@ -325,6 +326,9 @@ def _persist_new_release(
         workspace_root,
         event=event_name,
         release_version=record.version,
+        record_revisions={
+            f"release:{record.version}": record.versioning.revision
+        },
         data={"status": record.status},
     )
     rebuild_indexes(workspace_root)
@@ -466,12 +470,14 @@ def finalize_release(
         status="released",
         released_at=released_at,
         changelog_file=changelog_file or existing.changelog_file,
+        versioning=bump_versioning(existing.versioning),
     )
     save_release(workspace_root, updated, overwrite=True)
     event = append_event(
         workspace_root,
         event=EVENT_RELEASE_FINALIZED,
         release_version=version,
+        record_revisions={f"release:{version}": updated.versioning.revision},
         data={"released_at": released_at},
     )
     rebuild_indexes(workspace_root)
@@ -511,20 +517,20 @@ def update_release(
     title: str | None = None,
     status: str | None = None,
     note: str | None = None,
-    previous_version: str | None = UNSET,
-    changelog_file: str | None = UNSET,
-    boundary_ref: str | None = UNSET,
-    source_refs: tuple[str, ...] = UNSET,  # type: ignore[assignment]
-    source_count: int | None = UNSET,
-    released_at: str | None = UNSET,
+    previous_version: Any = UNSET,
+    changelog_file: Any = UNSET,
+    boundary_ref: Any = UNSET,
+    source_refs: Any = UNSET,
+    source_count: Any = UNSET,
+    released_at: Any = UNSET,
     clear_previous: bool = False,
     clear_changelog_file: bool = False,
     clear_boundary_ref: bool = False,
     clear_source_refs: bool = False,
     clear_source_count: bool = False,
     clear_released_at: bool = False,
-    git_base_ref: str | None = UNSET,
-    git_head_ref: str | None = UNSET,
+    git_base_ref: Any = UNSET,
+    git_head_ref: Any = UNSET,
     clear_git_range: bool = False,
     force: bool = False,
 ) -> dict[str, object]:
@@ -641,18 +647,20 @@ def update_release(
         boundary_ref=boundary,
         source_refs=refs,
         source_count=count,
-        git_base_ref=resolved_git["git_base_ref"],
-        git_base_sha=resolved_git["git_base_sha"],
-        git_head_ref=resolved_git["git_head_ref"],
-        git_head_sha=resolved_git["git_head_sha"],
-        git_range=resolved_git["git_range"],
-        git_commit_count=resolved_git["git_commit_count"],
+        git_base_ref=cast(str | None, resolved_git["git_base_ref"]),
+        git_base_sha=cast(str | None, resolved_git["git_base_sha"]),
+        git_head_ref=cast(str | None, resolved_git["git_head_ref"]),
+        git_head_sha=cast(str | None, resolved_git["git_head_sha"]),
+        git_range=cast(str | None, resolved_git["git_range"]),
+        git_commit_count=cast(int | None, resolved_git["git_commit_count"]),
+        versioning=bump_versioning(existing.versioning),
     )
     save_release(workspace_root, updated, overwrite=True)
     event = append_event(
         workspace_root,
         event=EVENT_RELEASE_UPDATED,
         release_version=version,
+        record_revisions={f"release:{version}": updated.versioning.revision},
         data={
             "fields": sorted(
                 key for key, value in values.items() if getattr(existing, key) != value
@@ -809,7 +817,6 @@ def cancel_release(
     reason: str | None = None,
     superseded_by: str | None = None,
     force_released_unshipped: bool = False,
-    canceled_at: str | None = None,
     target_file: Path | None = None,
     remove_changelog_section: bool = False,
     ignore_missing_section: bool = False,
@@ -842,21 +849,19 @@ def cancel_release(
         )
     if superseded_by is not None:
         validate_release_version(superseded_by)
-    timestamp = canceled_at if canceled_at is not None else _today()
-    if canceled_at is not None:
-        _validate_date(canceled_at, "--canceled-at")
     updated = replace(
         existing,
         status="canceled",
-        canceled_at=timestamp,
         cancel_reason=reason,
         superseded_by=superseded_by,
+        versioning=bump_versioning(existing.versioning),
     )
     save_release(workspace_root, updated, overwrite=True)
     event = append_event(
         workspace_root,
         event=EVENT_RELEASE_CANCELED,
         release_version=version,
+        record_revisions={f"release:{version}": updated.versioning.revision},
         data={
             "reason": reason,
             "previous_status": existing.status,
@@ -883,9 +888,9 @@ def rename_release(
     *,
     old_version: str,
     new_version: str,
-    previous_version: str | None = UNSET,
+    previous_version: Any = UNSET,
     title: str | None = None,
-    released_at: str | None = UNSET,
+    released_at: Any = UNSET,
     force_released_unshipped: bool = False,
     rewrite_successors: bool = False,
     target_file: Path | None = None,
@@ -940,6 +945,7 @@ def rename_release(
         resolved_previous = validate_release_version(str(resolved_previous))
     # Adjust a default tag title ("Release OLD") to the new version; keep a
     # custom title unless --title overrides it.
+    resolved_title: str | None
     if title is not None:
         resolved_title = title
     elif existing.title == f"Release {old_version}":
@@ -965,10 +971,9 @@ def rename_release(
         version=new_version,
         status=existing.status,
         title=resolved_title,
-        created_at=existing.created_at,
+        versioning=bump_versioning(existing.versioning),
         released_at=resolved_released_at,
         previous_version=resolved_previous,
-        canceled_at=existing.canceled_at,
         cancel_reason=existing.cancel_reason,
         superseded_by=existing.superseded_by,
         note=existing.note,
@@ -981,19 +986,32 @@ def rename_release(
     )
     rename_release_bundle(workspace_root, old_version, new_record)
     rewrote_successors = False
+    record_revisions = {
+        f"release:{new_version}": new_record.versioning.revision,
+    }
+    for entry in load_entries(workspace_root, new_version):
+        record_revisions[
+            f"entry:{new_version}/{entry.entry_id}"
+        ] = entry.versioning.revision
     if successors:
         for successor in successors:
-            updated_successor = replace(successor, previous_version=new_version)
+            updated_successor = replace(
+                successor,
+                previous_version=new_version,
+                versioning=bump_versioning(successor.versioning),
+            )
             save_release(workspace_root, updated_successor, overwrite=True)
+            record_revisions[
+                f"release:{successor.version}"
+            ] = updated_successor.versioning.revision
         rewrote_successors = True
     event = append_event(
         workspace_root,
         event=EVENT_RELEASE_RENAMED,
         release_version=new_version,
+        record_revisions=record_revisions,
         data={
-            "from_version": old_version,
-            "to_version": new_version,
-            "previous_status": existing.status,
+            "old_release_version": old_version,
             "rewrote_successors": bool(rewrote_successors),
         },
     )
@@ -1137,16 +1155,24 @@ def repair_release_chain(
     if not apply_changes or not changes:
         return payload
     by_version = {record.version: record for record in chain}
+    record_revisions: dict[str, int] = {}
     for change in changes:
         record = by_version[str(change["version"])]
-        updated = replace(record, previous_version=change["to"])  # type: ignore[arg-type]
+        updated = replace(
+            record,
+            previous_version=change["to"],  # type: ignore[arg-type]
+            versioning=bump_versioning(record.versioning),
+        )
         save_release(workspace_root, updated, overwrite=True)
+        record_revisions[
+            f"release:{record.version}"
+        ] = updated.versioning.revision
     event = append_event(
         workspace_root,
         event=EVENT_RELEASE_CHAIN_REPAIRED,
+        record_revisions=record_revisions,
         data={
-            "changes": changes,
-            "allow_canceled_predecessors": bool(allow_canceled_predecessors),
+            "changed_releases": [str(change["version"]) for change in changes],
         },
     )
     rebuild_indexes(workspace_root)

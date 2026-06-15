@@ -8,7 +8,7 @@
 Project-local release management for coding workflows.
 
 `releaseledger` is a standalone release-state ledger for Python projects and
-other source repositories. It records releases, release-note entries, audit
+other source repositories. It records releases, release-note entries, operation
 events, and JSON indexes in a deterministic file layout. It can also render
 reviewable changelog context and write final `CHANGELOG.md` sections from
 releaseledger entries.
@@ -51,7 +51,9 @@ a state directory, usually `.releaseledger/`:
 ```
 
 Release records and entries are Markdown files with YAML front matter. Every
-mutation appends an event to `events.jsonl` and rebuilds the JSON indexes.
+mutation appends an operation event to `events.jsonl` and rebuilds the JSON
+indexes. Events omit wall-clock timestamps and before/after deltas; git history
+provides chronology and record revisions validate file changes.
 
 ## Install
 
@@ -116,7 +118,8 @@ renders and inserts the final changelog section.
 | ----------------- | --------------------------------------------------------------------------------------------------------- |
 | Release           | A versioned release record with status, optional previous version, source boundary, and changelog target. |
 | Entry             | One release-note item attached to a release. Entries are grouped by kind for changelog output.            |
-| Event             | Append-only JSONL audit row written after each mutation.                                                  |
+| Event             | Append-only operation marker with affected record revisions.                                             |
+| Versioning        | Per-record metadata whose revision increases exactly once when a release or entry file changes.          |
 | Index             | Deterministic JSON summary rebuilt after mutations for fast inspection.                                   |
 | Ledger ref        | Branch-scoped namespace, defaulting to `main`.                                                            |
 | Global source ref | External provenance token such as `tl:task-0103`; releaseledger records it but does not resolve it.       |
@@ -157,7 +160,6 @@ releaseledger release finalize VERSION [--released-at YYYY-MM-DD]
 releaseledger release cancel VERSION [--reason TEXT]
                                     [--superseded-by VERSION]
                                     [--force-released-unshipped]
-                                    [--canceled-at YYYY-MM-DD]
                                     [--target-file PATH]
                                     [--remove-changelog-section]
                                     [--ignore-missing]

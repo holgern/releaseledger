@@ -37,6 +37,7 @@ def append_event(
     event: str,
     release_version: str | None = None,
     entry_id: str | None = None,
+    record_revisions: dict[str, int] | None = None,
     data: dict[str, object] | None = None,
 ) -> ReleaseEvent:
     """Append a new event and return it. Assigns the next ``event-NNNN`` id."""
@@ -45,10 +46,10 @@ def append_event(
     event_id = ledgercore.next_prefixed_id("event", [e.event_id for e in existing])
     record = ReleaseEvent(
         event_id=event_id,
-        ts=ledgercore.utc_now_iso(),
         event=event,
         release_version=release_version,
         entry_id=entry_id,
+        record_revisions=dict(record_revisions) if record_revisions else {},
         data=dict(data) if data else {},
     )
     rows = [e.to_dict() for e in existing]

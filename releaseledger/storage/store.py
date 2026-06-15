@@ -15,8 +15,8 @@ the config, mirroring the signatures in the implementation brief.
 
 from __future__ import annotations
 
+import copy
 import re
-import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -33,10 +33,12 @@ from releaseledger.domain.release import (
     parse_release_version_tuple,
     release_from_dict,
 )
+from releaseledger.domain.versioning import versioning_from_dict
 from releaseledger.errors import (
     CODE_CONFLICT,
     CODE_NOT_FOUND,
     CODE_USAGE_ERROR,
+    CODE_VALIDATION_ERROR,
     LaunchError,
 )
 from releaseledger.storage.paths import ProjectPaths, resolve_project_paths
@@ -149,10 +151,23 @@ def save_release(
             exit_code=2,
             remediation=[f"Run `releaseledger release show {version}`."],
         )
+    old_data: dict[str, object] | None = None
+    old_body: str | None = None
+    if target.is_file():
+        old_front_matter, old_body = ledgercore.read_front_matter_document(target)
+        old_data = dict(old_front_matter)
+    new_data = release.to_front_matter()
+    _validate_revision_transition(
+        old_data=old_data,
+        new_data=new_data,
+        old_body=old_body,
+        new_body=release.note,
+        label=f"Release {version}",
+    )
     ensure_release_bundle(paths, version)
     ledgercore.write_front_matter_document(
         target,
-        release.to_front_matter(),
+        new_data,
         body=release.note or "",
         body_mode="ensure-single-final-newline",
         key_order=RELEASE_FRONT_MATTER_KEY_ORDER,
@@ -181,7 +196,7 @@ def load_release(workspace_root: Path, version: str) -> ReleaseRecord:
 def list_releases(workspace_root: Path) -> list[ReleaseRecord]:
     """Return all releases sorted deterministically.
 
-    Sort key: released_at, then created_at, then version.
+    Sort key: released_at, then semantic version, then raw version.
     """
     paths = _resolve(workspace_root)
     if not paths.releases_dir.is_dir():
@@ -211,14 +226,12 @@ def _release_sort_key(record: ReleaseRecord) -> tuple[object, ...]:
     released_at = record.released_at or ""
     semver = parse_release_version_tuple(record.version)
     # Parseable semantic versions sort by (0, major, minor, patch) so same-date
-    # releases order naturally regardless of created_at (which previously let a
-    # later-created v0.1.0 sort after v0.1.1). Non-parseable versions sort after
-    # real semver via flag 1 and then by raw string.
+    # releases order naturally. Non-parseable versions sort after real semver.
     if semver is not None:
         semver_component: tuple[object, ...] = (0, *semver)
     else:
-        semver_component = (1, 0, 0, 0)
-    return (released_at, semver_component, record.created_at, record.version)
+        semver_component = (1, record.version)
+    return (released_at, semver_component, record.version)
 
 
 def next_entry_id(workspace_root: Path, release_version: str) -> str:
@@ -242,9 +255,22 @@ def save_entry(workspace_root: Path, entry: ReleaseEntryRecord) -> ReleaseEntryR
     entries_dir = _entries_dir(paths, entry.release_version)
     ledgercore.ensure_dir(entries_dir)
     target = entries_dir / f"{entry.entry_id}.md"
+    old_data: dict[str, object] | None = None
+    old_body: str | None = None
+    if target.is_file():
+        old_front_matter, old_body = ledgercore.read_front_matter_document(target)
+        old_data = dict(old_front_matter)
+    new_data = entry.to_front_matter()
+    _validate_revision_transition(
+        old_data=old_data,
+        new_data=new_data,
+        old_body=old_body,
+        new_body=entry.body,
+        label=f"Entry {entry.release_version}/{entry.entry_id}",
+    )
     ledgercore.write_front_matter_document(
         target,
-        entry.to_front_matter(),
+        new_data,
         body=entry.body or "",
         body_mode="ensure-single-final-newline",
         key_order=ENTRY_FRONT_MATTER_KEY_ORDER,
@@ -288,8 +314,8 @@ def _release_index_row(record: ReleaseRecord) -> dict[str, object]:
         "version": record.version,
         "status": record.status,
         "title": record.title,
-        "created_at": record.created_at,
         "released_at": record.released_at,
+        "record_revision": record.versioning.revision,
         "previous_version": record.previous_version,
         "changelog_file": record.changelog_file,
         "boundary_ref": record.boundary_ref,
@@ -313,6 +339,7 @@ def _entry_index_row(entry: ReleaseEntryRecord) -> dict[str, object]:
         "scopes": list(entry.scopes),
         "source_refs": list(entry.source_refs),
         "breaking": entry.breaking,
+        "record_revision": entry.versioning.revision,
     }
     if entry.sources:
         row["sources"] = list(entry.sources)
@@ -361,7 +388,13 @@ def save_entries_for_release(
                 # Best-effort cleanup; stale files are overwritten below.
                 pass
     for entry in entries:
-        rewritten = replace(entry, release_version=release_version)
+        rewritten = replace(
+            entry,
+            release_version=release_version,
+            versioning=replace(
+                entry.versioning, revision=entry.versioning.revision + 1
+            ),
+        )
         save_entry(workspace_root, rewritten)
 
 
@@ -393,16 +426,52 @@ def rename_release_bundle(
     # Load entries before touching the filesystem so a rewrite failure leaves
     # the original bundle intact.
     entries = load_entries(workspace_root, old_version)
-    ensure_release_bundle(paths, new_record.version)
+    new_bundle = release_dir(paths, new_record.version)
+    if new_bundle.exists():
+        raise LaunchError(
+            f"Release version already exists: {new_record.version}",
+            code=CODE_CONFLICT,
+            exit_code=2,
+        )
+    old_bundle.rename(new_bundle)
     save_release(workspace_root, new_record, overwrite=True)
     save_entries_for_release(workspace_root, new_record.version, entries)
-    # Remove the old bundle entirely (release.md + entries + any leftovers).
-    try:
-        shutil.rmtree(old_bundle)
-    except OSError as exc:
-        raise LaunchError(
-            f"Failed to remove old release bundle {old_version}: {exc}",
-            code="RELEASELEDGER_ERROR",
-            exit_code=1,
-        ) from exc
     return new_record
+
+
+def _strip_revision(data: dict[str, object]) -> dict[str, object]:
+    clone = copy.deepcopy(data)
+    versioning = clone.get("versioning")
+    if isinstance(versioning, dict):
+        versioning.pop("revision", None)
+    return clone
+
+
+def _validate_revision_transition(
+    *,
+    old_data: dict[str, object] | None,
+    new_data: dict[str, object],
+    old_body: str | None,
+    new_body: str | None,
+    label: str,
+) -> None:
+    new_revision = versioning_from_dict(new_data.get("versioning")).revision
+    if old_data is None:
+        if new_revision != 1:
+            raise LaunchError(
+                f"{label} revision must start at 1.",
+                code=CODE_VALIDATION_ERROR,
+                exit_code=2,
+            )
+        return
+    old_revision = versioning_from_dict(old_data.get("versioning")).revision
+    changed = _strip_revision(old_data) != _strip_revision(new_data) or (
+        old_body or ""
+    ) != (new_body or "")
+    expected = old_revision + 1 if changed else old_revision
+    if new_revision != expected:
+        raise LaunchError(
+            f"{label} revision must be {expected}; got {new_revision}.",
+            code=CODE_VALIDATION_ERROR,
+            exit_code=2,
+        )

@@ -32,23 +32,22 @@ def _json_run(tmp_path: Path, *args: str) -> dict[str, object]:
     return json.loads(result.output)
 
 
-def test_legacy_entry_defaults_and_kind_alias() -> None:
+def test_entry_defaults_and_kind_alias() -> None:
     record = entry_from_dict(
         {
-            "schema_version": 1,
+            "schema_version": 2,
+            "versioning": {"schema_version": 1, "revision": 1},
             "object_type": "release_entry",
-            "file_version": "releaseledger.v1",
             "entry_id": "entry-0001",
             "release_version": "1.0.0",
             "kind": "documentation",
             "summary": "Documented release workflow",
-            "created_at": "2026-06-13T00:00:00Z",
         }
     )
 
     assert record.kind == "docs"
     assert record.status == "accepted"
-    assert record.updated_at is None
+    assert record.versioning.revision == 1
     assert record.audience is None
     assert record.scopes == ()
     assert record.source_refs == ()
@@ -57,14 +56,13 @@ def test_legacy_entry_defaults_and_kind_alias() -> None:
 def test_entry_accepts_quality_and_canonicalizes_source_refs() -> None:
     record = entry_from_dict(
         {
-            "schema_version": 1,
+            "schema_version": 2,
+            "versioning": {"schema_version": 1, "revision": 1},
             "object_type": "release_entry",
-            "file_version": "releaseledger.v1",
             "entry_id": "entry-0001",
             "release_version": "1.0.0",
             "kind": "quality",
             "summary": "Improved release checks",
-            "created_at": "2026-06-13T00:00:00Z",
             "status": "draft",
             "audience": "developer",
             "scopes": ["cli", "cli", "storage"],
@@ -87,14 +85,13 @@ def test_entry_accepts_quality_and_canonicalizes_source_refs() -> None:
 )
 def test_entry_rejects_invalid_new_metadata(field: str, value: object) -> None:
     data: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
+            "versioning": {"schema_version": 1, "revision": 1},
         "object_type": "release_entry",
-        "file_version": "releaseledger.v1",
         "entry_id": "entry-0001",
         "release_version": "1.0.0",
         "kind": "changed",
         "summary": "Changed release workflow",
-        "created_at": "2026-06-13T00:00:00Z",
         field: value,
     }
 
@@ -105,12 +102,11 @@ def test_entry_rejects_invalid_new_metadata(field: str, value: object) -> None:
 def test_legacy_release_defaults_source_metadata() -> None:
     record = release_from_dict(
         {
-            "schema_version": 1,
+            "schema_version": 2,
+            "versioning": {"schema_version": 1, "revision": 1},
             "object_type": "release",
-            "file_version": "releaseledger.v1",
             "version": "1.0.0",
             "status": "planned",
-            "created_at": "2026-06-13T00:00:00Z",
         }
     )
 
@@ -123,12 +119,11 @@ def test_indexes_include_new_source_and_status_fields(tmp_path: Path) -> None:
     initialize_project(tmp_path)
     release = release_from_dict(
         {
-            "schema_version": 1,
+            "schema_version": 2,
+            "versioning": {"schema_version": 1, "revision": 1},
             "object_type": "release",
-            "file_version": "releaseledger.v1",
             "version": "1.0.0",
             "status": "planned",
-            "created_at": ledgercore.utc_now_iso(),
             "boundary_ref": "tl:task-0105",
             "source_refs": ["tl:task-0103"],
             "source_count": 3,
@@ -137,14 +132,13 @@ def test_indexes_include_new_source_and_status_fields(tmp_path: Path) -> None:
     save_release(tmp_path, release)
     entry = entry_from_dict(
         {
-            "schema_version": 1,
+            "schema_version": 2,
+            "versioning": {"schema_version": 1, "revision": 1},
             "object_type": "release_entry",
-            "file_version": "releaseledger.v1",
             "entry_id": "entry-0001",
             "release_version": "1.0.0",
             "kind": "quality",
             "summary": "Improved release checks",
-            "created_at": ledgercore.utc_now_iso(),
             "status": "draft",
             "audience": "developer",
             "scopes": ["cli"],
@@ -258,7 +252,7 @@ def test_entry_add_preview_show_and_update(tmp_path: Path) -> None:
         "draft",
     )
     assert updated["result"]["entry"]["status"] == "draft"
-    assert updated["result"]["entry"]["updated_at"]
+    assert updated["result"]["entry"]["versioning"]["revision"] == 2
 
 
 def test_entry_batch_is_atomic_and_deterministic(tmp_path: Path) -> None:
@@ -301,12 +295,11 @@ def test_entry_batch_returns_all_structured_issues(tmp_path: Path) -> None:
         tmp_path,
         release_from_dict(
             {
-                "schema_version": 1,
+                "schema_version": 2,
+            "versioning": {"schema_version": 1, "revision": 1},
                 "object_type": "release",
-                "file_version": "releaseledger.v1",
                 "version": "1.0.0",
                 "status": "planned",
-                "created_at": ledgercore.utc_now_iso(),
             }
         ),
     )
@@ -439,13 +432,12 @@ def test_entry_lint_reports_malformed_entry_files(tmp_path: Path) -> None:
         / "entries"
     )
     base = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "versioning": {"schema_version": 1, "revision": 1},
         "object_type": "release_entry",
-        "file_version": "releaseledger.v1",
         "release_version": "1.0.0",
         "kind": "changed",
         "summary": "Changed malformed fixture",
-        "created_at": ledgercore.utc_now_iso(),
     }
     invalid_records = [
         ("entry-0001", {"schema_version": 99}),

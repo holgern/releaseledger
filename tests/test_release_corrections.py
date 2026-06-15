@@ -74,41 +74,38 @@ class TestStatusAndConstants:
 
 
 # ---------------------------------------------------------------------------
-# ReleaseRecord additive cancellation fields
+# ReleaseRecord cancellation fields
 # ---------------------------------------------------------------------------
 
 
 class TestReleaseRecordFields:
-    def test_record_round_trips_cancellation_fields(self) -> None:
+    def test_record_round_trips_cancellation_fields_without_date(self) -> None:
         from releaseledger.domain.release import ReleaseRecord, release_from_dict
 
         record = ReleaseRecord(
             version="v0.5.0",
             status="canceled",
-            canceled_at="2026-06-14",
             cancel_reason="never shipped",
             superseded_by="v0.6.0",
         )
         rebuilt = release_from_dict(record.to_dict())
-        assert rebuilt.canceled_at == "2026-06-14"
+        assert "canceled_at" not in rebuilt.to_dict()
         assert rebuilt.cancel_reason == "never shipped"
         assert rebuilt.superseded_by == "v0.6.0"
 
-    def test_old_records_without_new_fields_stay_valid(self) -> None:
+    def test_optional_cancellation_fields_default_to_none(self) -> None:
         from releaseledger.domain.release import release_from_dict
 
         legacy = {
-            "schema_version": 1,
+            "schema_version": 2,
+            "versioning": {"schema_version": 1, "revision": 1},
             "object_type": "release",
-            "file_version": "releaseledger.v1",
             "version": "v0.1.0",
             "status": "released",
             "title": "Release v0.1.0",
-            "created_at": "2026-01-01T00:00:00Z",
             "previous_version": None,
         }
         record = release_from_dict(legacy)
-        assert record.canceled_at is None
         assert record.cancel_reason is None
         assert record.superseded_by is None
 
@@ -116,13 +113,12 @@ class TestReleaseRecordFields:
         from releaseledger.domain.release import release_from_dict
 
         bad = {
-            "schema_version": 1,
+            "schema_version": 2,
+            "versioning": {"schema_version": 1, "revision": 1},
             "object_type": "release",
-            "file_version": "releaseledger.v1",
             "version": "v0.5.0",
             "status": "canceled",
             "title": "x",
-            "created_at": "2026-01-01",
             "superseded_by": "a/b",
         }
         with pytest.raises(LaunchError):
@@ -406,8 +402,9 @@ class TestRenameRelease:
         events = load_events(tmp_path)
         renamed = [e for e in events if e.event == "release.renamed"]
         assert renamed
-        assert renamed[-1].data.get("from_version") == "v0.4.3"
-        assert renamed[-1].data.get("to_version") == "v0.5.0"
+        assert renamed[-1].data.get("old_release_version") == "v0.4.3"
+        assert renamed[-1].release_version == "v0.5.0"
+        assert "to_version" not in renamed[-1].data
         assert result.get("events")
 
     def test_release_rename_refuses_existing_target_version(

@@ -16,9 +16,13 @@ from releaseledger.domain.states import (
     ENTRY_KIND_ALIASES,
     ENTRY_KINDS,
     ENTRY_STATUSES,
-    RELEASELEDGER_FILE_VERSION,
     RELEASELEDGER_SCHEMA_VERSION,
     SUPPORTED_SCHEMA_VERSIONS,
+)
+from releaseledger.domain.versioning import (
+    RecordVersioning,
+    initial_versioning,
+    versioning_from_dict,
 )
 from releaseledger.errors import CODE_VALIDATION_ERROR, LaunchError
 
@@ -34,13 +38,11 @@ __all__ = [
 ENTRY_FRONT_MATTER_KEY_ORDER = (
     "schema_version",
     "object_type",
-    "file_version",
+    "versioning",
     "entry_id",
     "release_version",
     "kind",
     "summary",
-    "created_at",
-    "updated_at",
     "status",
     "audience",
     "scopes",
@@ -64,8 +66,7 @@ class ReleaseEntryRecord:
     kind: str
     summary: str
     body: str | None = None
-    created_at: str = field(default_factory=ledgercore.utc_now_iso)
-    updated_at: str | None = None
+    versioning: RecordVersioning = field(default_factory=initial_versioning)
     status: str = "accepted"
     audience: str | None = None
     scopes: tuple[str, ...] = ()
@@ -77,7 +78,6 @@ class ReleaseEntryRecord:
     breaking: bool = False
     internal: bool = False
     order: int | None = None
-    file_version: str = RELEASELEDGER_FILE_VERSION
     schema_version: int = RELEASELEDGER_SCHEMA_VERSION
     object_type: str = "release_entry"
 
@@ -86,14 +86,12 @@ class ReleaseEntryRecord:
         return {
             "schema_version": self.schema_version,
             "object_type": self.object_type,
-            "file_version": self.file_version,
+            "versioning": self.versioning.to_dict(),
             "entry_id": self.entry_id,
             "release_version": self.release_version,
             "kind": self.kind,
             "summary": self.summary,
             "body": self.body,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
             "status": self.status,
             "audience": self.audience,
             "scopes": list(self.scopes),
@@ -307,8 +305,7 @@ def entry_from_dict(data: dict[str, object]) -> ReleaseEntryRecord:
         kind=kind,
         summary=summary,
         body=_require_optional_str(data.get("body"), "body"),
-        created_at=_require_str(data.get("created_at", ""), "created_at"),
-        updated_at=_require_optional_str(data.get("updated_at"), "updated_at"),
+        versioning=versioning_from_dict(data.get("versioning")),
         status=normalize_entry_status(
             _require_str(data.get("status", "accepted"), "status")
         ),
@@ -324,9 +321,6 @@ def entry_from_dict(data: dict[str, object]) -> ReleaseEntryRecord:
         breaking=_require_bool(data.get("breaking", False), "breaking"),
         internal=_require_bool(data.get("internal", False), "internal"),
         order=_require_optional_int(data.get("order"), "order"),
-        file_version=_require_str(
-            data.get("file_version", RELEASELEDGER_FILE_VERSION), "file_version"
-        ),
         schema_version=schema_version,
         object_type="release_entry",
     )

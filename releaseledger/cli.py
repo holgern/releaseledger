@@ -190,7 +190,7 @@ app.add_typer(release_app, name="release")
 def _release_human_summary(record: dict[str, object]) -> str:
     version = str(record.get("version", ""))
     status = str(record.get("status", ""))
-    date_value = record.get("released_at") or record.get("created_at") or ""
+    date_value = record.get("released_at") or ""
     title = record.get("title") or record.get("note") or ""
     title_text = str(title).splitlines()[0] if title else ""
     return f"{version}  {status}  {date_value}  {title_text}".rstrip()
@@ -540,10 +540,6 @@ def release_cancel_command(
             help="Allow canceling a release currently marked 'released'.",
         ),
     ] = False,
-    canceled_at: Annotated[
-        str | None,
-        typer.Option("--canceled-at", help="Cancellation date YYYY-MM-DD."),
-    ] = None,
     target_file: Annotated[
         Path | None,
         typer.Option("--target-file", help="Changelog file to update."),
@@ -570,7 +566,6 @@ def release_cancel_command(
             reason=reason,
             superseded_by=superseded_by,
             force_released_unshipped=force_released_unshipped,
-            canceled_at=canceled_at,
             target_file=target_file,
             remove_changelog_section=remove_changelog_section,
             ignore_missing_section=ignore_missing_section,
@@ -682,7 +677,7 @@ def release_chain_check_command(ctx: typer.Context) -> None:
     def produce() -> CommandResult:
         result = check_release_chain(_paths(ctx).workspace_root)
         problems = result.get("problems", [])
-        if problems:
+        if isinstance(problems, list) and problems:
             lines = ["CHAIN PROBLEMS"]
             for problem in problems:
                 assert isinstance(problem, dict)
@@ -724,7 +719,7 @@ def release_chain_repair_command(
             _paths(ctx).workspace_root, apply_changes=should_apply
         )
         changes = result.get("changes", [])
-        if changes:
+        if isinstance(changes, list) and changes:
             lines = ["CHAIN CHANGES" + (" (applied)" if should_apply else " (dry-run)")]
             for change in changes:
                 assert isinstance(change, dict)

@@ -49,7 +49,6 @@ Release commands
    releaseledger release cancel VERSION [--reason TEXT]
                                        [--superseded-by VERSION]
                                        [--force-released-unshipped]
-                                       [--canceled-at YYYY-MM-DD]
                                        [--target-file PATH]
                                        [--remove-changelog-section]
                                        [--ignore-missing]

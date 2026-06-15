@@ -42,9 +42,8 @@ Release statuses are:
 
 ``canceled`` means the release was never shipped: it is excluded from
 previous-version inference and not built into public changelogs by default.
-Canceled releases may carry ``canceled_at``, ``cancel_reason``, and
-``superseded_by`` metadata and remain visible in ``release list`` as an audit
-tombstone.
+Canceled releases may carry ``cancel_reason`` and ``superseded_by`` metadata
+and remain visible in ``release list`` as an audit tombstone.
 
 Entry
 -----
@@ -73,8 +72,16 @@ include accepted entries by default.
 Event
 -----
 
-Every mutation appends a JSON object to ``events/events.jsonl``. Events provide
-a simple audit trail and deterministic event IDs.
+Events are append-only operation rows. They do not store wall-clock timestamps
+or before/after deltas. Releaseledger relies on git history for chronological
+review and on per-record revisions for validation.
+
+Versioning
+----------
+
+Release and entry files contain ``versioning.schema_version`` and a positive
+``versioning.revision``. New records start at revision 1, and the revision
+increases by exactly one whenever that record file meaningfully changes.
 
 Index
 -----

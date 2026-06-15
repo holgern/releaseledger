@@ -20,6 +20,7 @@ from releaseledger.domain.event import (
     EVENT_ENTRY_IMPORTED,
     EVENT_ENTRY_UPDATED,
 )
+from releaseledger.domain.versioning import bump_versioning
 from releaseledger.errors import (
     CODE_CONFLICT,
     CODE_NOT_FOUND,
@@ -235,9 +236,14 @@ def add_release_entry(
             written=False,
         )
     save_entry(workspace_root, record)
+    updated_release = replace(
+        release,
+        entry_count=len(entries) + 1,
+        versioning=bump_versioning(release.versioning),
+    )
     save_release(
         workspace_root,
-        replace(release, entry_count=len(entries) + 1),
+        updated_release,
         overwrite=True,
     )
     event = append_event(
@@ -245,6 +251,10 @@ def add_release_entry(
         event=EVENT_ENTRY_ADDED,
         release_version=release.version,
         entry_id=record.entry_id,
+        record_revisions={
+            f"release:{release.version}": updated_release.versioning.revision,
+            f"entry:{release.version}/{record.entry_id}": record.versioning.revision,
+        },
         data={"kind": record.kind, "status": record.status},
     )
     rebuild_indexes(workspace_root)
@@ -346,7 +356,7 @@ def update_release_entry(
         prs=candidate.prs,
         breaking=candidate.breaking,
         internal=candidate.internal,
-        updated_at=ledgercore.utc_now_iso(),
+        versioning=bump_versioning(existing.versioning),
     )
     save_entry(workspace_root, updated)
     event = append_event(
@@ -354,6 +364,9 @@ def update_release_entry(
         event=EVENT_ENTRY_UPDATED,
         release_version=release_version,
         entry_id=entry_id,
+        record_revisions={
+            f"entry:{release_version}/{entry_id}": updated.versioning.revision
+        },
         data={
             "fields": sorted(
                 field
@@ -478,18 +491,37 @@ def import_release_entry_file(
         breaking=data.get("breaking", False),
         internal=data.get("internal", False),
     )
+    if existing is not None:
+        record = replace(
+            record,
+            versioning=bump_versioning(existing.versioning),
+        )
     save_entry(workspace_root, record)
+    updated_release = release
     if existing is None:
+        updated_release = replace(
+            release,
+            entry_count=len(entries) + 1,
+            versioning=bump_versioning(release.versioning),
+        )
         save_release(
             workspace_root,
-            replace(release, entry_count=len(entries) + 1),
+            updated_release,
             overwrite=True,
         )
+    record_revisions = {
+        f"entry:{release_version}/{entry_id}": record.versioning.revision
+    }
+    if existing is None:
+        record_revisions[
+            f"release:{release_version}"
+        ] = updated_release.versioning.revision
     event = append_event(
         workspace_root,
         event=EVENT_ENTRY_IMPORTED,
         release_version=release_version,
         entry_id=entry_id,
+        record_revisions=record_revisions,
         data={"source_path": str(source_path), "replaced": existing is not None},
     )
     rebuild_indexes(workspace_root)
@@ -599,15 +631,29 @@ def add_many_release_entries(
     if not dry_run:
         for record in proposed:
             save_entry(workspace_root, record)
+        updated_release = replace(
+            release,
+            entry_count=len(existing) + len(proposed),
+            versioning=bump_versioning(release.versioning),
+        )
         save_release(
             workspace_root,
-            replace(release, entry_count=len(existing) + len(proposed)),
+            updated_release,
             overwrite=True,
         )
         event = append_event(
             workspace_root,
             event=EVENT_ENTRY_BATCH_ADDED,
             release_version=release_version,
+            record_revisions={
+                f"release:{release_version}": updated_release.versioning.revision,
+                **{
+                    f"entry:{release_version}/{record.entry_id}": (
+                        record.versioning.revision
+                    )
+                    for record in proposed
+                },
+            },
             data={"entry_ids": [record.entry_id for record in proposed]},
         )
         rebuild_indexes(workspace_root)

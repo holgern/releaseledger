@@ -19,6 +19,9 @@ Releaseledger is separate from taskledger. Do not treat `.releaseledger/` as tas
 ## Never do these things
 
 - Do not edit `.releaseledger/` storage files directly. Use releaseledger commands or the public `releaseledger.api.*` surface.
+- Release and entry records use validated per-record revisions. Events are
+  append-only operation rows without wall-clock timestamps or before/after
+  deltas; use git history for chronological review.
 - Do not invent a release date. Use the date explicitly provided by the user, the persisted `released_at` value, or an unreleased heading.
 - Do not include internal entries unless the user explicitly asks for internal release notes or passes an include-internal option.
 - Do not silently overwrite an existing release section in `CHANGELOG.md`. Use the supported replace/update option only when explicitly requested.

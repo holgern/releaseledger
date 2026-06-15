@@ -11,14 +11,16 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-import ledgercore
-
 from releaseledger.domain.source_ref import normalize_source_ref
 from releaseledger.domain.states import (
     RELEASE_STATUSES,
-    RELEASELEDGER_FILE_VERSION,
     RELEASELEDGER_SCHEMA_VERSION,
     SUPPORTED_SCHEMA_VERSIONS,
+)
+from releaseledger.domain.versioning import (
+    RecordVersioning,
+    initial_versioning,
+    versioning_from_dict,
 )
 from releaseledger.errors import CODE_VALIDATION_ERROR, LaunchError
 
@@ -32,14 +34,12 @@ __all__ = [
 RELEASE_FRONT_MATTER_KEY_ORDER = (
     "schema_version",
     "object_type",
-    "file_version",
+    "versioning",
     "version",
     "status",
     "title",
-    "created_at",
     "released_at",
     "previous_version",
-    "canceled_at",
     "cancel_reason",
     "superseded_by",
     "changelog_file",
@@ -64,10 +64,9 @@ class ReleaseRecord:
     version: str
     status: str = "planned"
     title: str | None = None
-    created_at: str = field(default_factory=ledgercore.utc_now_iso)
+    versioning: RecordVersioning = field(default_factory=initial_versioning)
     released_at: str | None = None
     previous_version: str | None = None
-    canceled_at: str | None = None
     cancel_reason: str | None = None
     superseded_by: str | None = None
     note: str | None = None
@@ -83,7 +82,6 @@ class ReleaseRecord:
     git_head_sha: str | None = None
     git_range: str | None = None
     git_commit_count: int | None = None
-    file_version: str = RELEASELEDGER_FILE_VERSION
     schema_version: int = RELEASELEDGER_SCHEMA_VERSION
     object_type: str = "release"
 
@@ -92,14 +90,12 @@ class ReleaseRecord:
         return {
             "schema_version": self.schema_version,
             "object_type": self.object_type,
-            "file_version": self.file_version,
+            "versioning": self.versioning.to_dict(),
             "version": self.version,
             "status": self.status,
             "title": self.title,
-            "created_at": self.created_at,
             "released_at": self.released_at,
             "previous_version": self.previous_version,
-            "canceled_at": self.canceled_at,
             "cancel_reason": self.cancel_reason,
             "superseded_by": self.superseded_by,
             "note": self.note,
@@ -242,8 +238,6 @@ def parse_release_version_tuple(version: str) -> tuple[int, int, int] | None:
     Returns ``None`` when the version is not a recognizable semantic version so
     callers can fall back to lexicographic ordering for non-standard versions.
     """
-    if not isinstance(version, str):
-        return None
     match = _SEMVER_RE.match(version.strip())
     if match is None:
         return None
@@ -289,12 +283,11 @@ def release_from_dict(data: dict[str, object]) -> ReleaseRecord:
         version=version,
         status=status,
         title=_require_optional_str(data.get("title"), "title"),
-        created_at=_require_str(data.get("created_at", ""), "created_at"),
+        versioning=versioning_from_dict(data.get("versioning")),
         released_at=_require_optional_str(data.get("released_at"), "released_at"),
         previous_version=_require_optional_str(
             data.get("previous_version"), "previous_version"
         ),
-        canceled_at=_require_optional_str(data.get("canceled_at"), "canceled_at"),
         cancel_reason=_require_optional_str(data.get("cancel_reason"), "cancel_reason"),
         superseded_by=_require_optional_release_version(
             data.get("superseded_by"), "superseded_by"
@@ -317,9 +310,6 @@ def release_from_dict(data: dict[str, object]) -> ReleaseRecord:
         git_range=_require_optional_str(data.get("git_range"), "git_range"),
         git_commit_count=_require_optional_int(
             data.get("git_commit_count"), "git_commit_count"
-        ),
-        file_version=_require_str(
-            data.get("file_version", RELEASELEDGER_FILE_VERSION), "file_version"
         ),
         schema_version=schema_version,
         object_type="release",

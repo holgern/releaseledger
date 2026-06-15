@@ -43,6 +43,25 @@ Storage tree:
            releases.json
            entries.json
 
+Release and entry Markdown records use schema version 2 and include validated
+record metadata:
+
+.. code-block:: yaml
+
+   schema_version: 2
+   object_type: release
+   versioning:
+     schema_version: 1
+     revision: 1
+   version: 1.2.0
+   status: released
+   released_at: 2026-06-14
+
+``released_at`` is the public changelog date. Mutation dates are not stored.
+Indexes are derived and expose ``record_revision`` for inspection. Events are
+append-only operation rows with affected record revisions; git history provides
+chronology and exact before/after content.
+
 External state directories
 --------------------------
 
