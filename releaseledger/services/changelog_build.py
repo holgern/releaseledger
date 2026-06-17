@@ -403,7 +403,7 @@ def render_changelog_section(
     """Render the final changelog section for ``version`` without writing files.
 
     Returns render metadata and the section text. The section has exactly one
-    trailing newline. ``section_heading`` is the first ``## `` line in the
+    trailing newline. ``section_heading`` is the first ``##`` line in the
     rendered section (or None if the template produced none).
 
     If ``template_name`` is not ``"default"``, looks up the template profile

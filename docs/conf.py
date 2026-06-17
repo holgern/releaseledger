@@ -23,6 +23,7 @@ except metadata.PackageNotFoundError:
 version = ".".join(release.split(".")[:2])
 
 extensions = [
+    "myst_parser",
     "sphinx.ext.autodoc",
     "sphinx.ext.viewcode",
     "sphinx.ext.napoleon",
@@ -33,6 +34,18 @@ extensions = [
 
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+
+# Use MyST Markdown as the only documentation source format after the RST migration.
+source_suffix = {
+    ".md": "markdown",
+}
+
+# Keep MyST configuration minimal so rendered content remains equivalent to
+# the previous RST output. Enable extensions only when a converted page needs them.
+myst_enable_extensions: list[str] = [
+    "deflist",  # RST-style definition lists, used by docs/changelog.md Template context
+]
+
 
 html_theme = "sphinx_rtd_theme"
 html_static_path: list[str] = []
