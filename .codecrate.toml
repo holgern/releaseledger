@@ -11,6 +11,7 @@ exclude = [
   "todo.md",
   "run.html",
   "pi-session-*.html",
+  ".releaseledger",
   "*-session-*.html",
   ".pytest_cache/*",
   ".ruff_cache/*",

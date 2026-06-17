@@ -58,6 +58,20 @@
   {
     "audience": null,
     "breaking": false,
+    "entry_id": "entry-0001",
+    "internal": false,
+    "kind": "added",
+    "order": 1,
+    "record_revision": 2,
+    "release_version": "0.3.2",
+    "scopes": [],
+    "source_refs": ["git:9f10c3d476e4bbc0326717d5c57613bdb86fa074"],
+    "status": "accepted",
+    "summary": "Added --unreleased-version to fold a planned release into the Unreleased section"
+  },
+  {
+    "audience": null,
+    "breaking": false,
     "entry_id": "entry-0002",
     "internal": false,
     "kind": "added",
@@ -114,6 +128,20 @@
   {
     "audience": null,
     "breaking": false,
+    "entry_id": "entry-0002",
+    "internal": false,
+    "kind": "added",
+    "order": 2,
+    "record_revision": 2,
+    "release_version": "0.3.2",
+    "scopes": [],
+    "source_refs": ["git:9f10c3d476e4bbc0326717d5c57613bdb86fa074"],
+    "status": "accepted",
+    "summary": "Added :root base sentinel for first-release git ranges"
+  },
+  {
+    "audience": null,
+    "breaking": false,
     "entry_id": "entry-0003",
     "internal": false,
     "kind": "added",
@@ -166,6 +194,20 @@
     "source_refs": ["git:ffe9d5578a84fb171f22b2ad385e502f178a176d"],
     "status": "accepted",
     "summary": "Added entry add-many --guard-commit-subjects to reject batches whose summaries copy or trivially transform commit subjects"
+  },
+  {
+    "audience": null,
+    "breaking": false,
+    "entry_id": "entry-0003",
+    "internal": false,
+    "kind": "added",
+    "order": 3,
+    "record_revision": 2,
+    "release_version": "0.3.2",
+    "scopes": [],
+    "source_refs": ["git:9f10c3d476e4bbc0326717d5c57613bdb86fa074"],
+    "status": "accepted",
+    "summary": "Added keepachangelog and extended changelog group modes"
   },
   {
     "audience": null,
@@ -229,6 +271,20 @@
   {
     "audience": null,
     "breaking": false,
+    "entry_id": "entry-0004",
+    "internal": false,
+    "kind": "changed",
+    "order": 4,
+    "record_revision": 4,
+    "release_version": "0.3.2",
+    "scopes": [],
+    "source_refs": ["git:9f10c3d476e4bbc0326717d5c57613bdb86fa074"],
+    "status": "accepted",
+    "summary": "Changed full builds to omit an empty Unreleased section and its link reference"
+  },
+  {
+    "audience": null,
+    "breaking": false,
     "entry_id": "entry-0005",
     "internal": false,
     "kind": "added",
@@ -281,6 +337,20 @@
     "source_refs": ["git:200ede51c55086126ae7ea33d9e2004da6ded1c0"],
     "status": "accepted",
     "summary": "Changed project URLs from holgern to ledgerwerk GitHub organization"
+  },
+  {
+    "audience": null,
+    "breaking": false,
+    "entry_id": "entry-0005",
+    "internal": false,
+    "kind": "changed",
+    "order": 5,
+    "record_revision": 4,
+    "release_version": "0.3.2",
+    "scopes": [],
+    "source_refs": ["git:9f10c3d476e4bbc0326717d5c57613bdb86fa074"],
+    "status": "accepted",
+    "summary": "Changed release show to display git range metadata"
   },
   {
     "audience": null,
@@ -341,6 +411,20 @@
   {
     "audience": null,
     "breaking": false,
+    "entry_id": "entry-0006",
+    "internal": false,
+    "kind": "changed",
+    "order": 6,
+    "record_revision": 4,
+    "release_version": "0.3.2",
+    "scopes": [],
+    "source_refs": ["git:9f10c3d476e4bbc0326717d5c57613bdb86fa074"],
+    "status": "accepted",
+    "summary": "Changed git range --head to default to the stored release head"
+  },
+  {
+    "audience": null,
+    "breaking": false,
     "entry_id": "entry-0007",
     "internal": false,
     "kind": "added",
@@ -393,6 +477,20 @@
     "source_refs": ["git:200ede51c55086126ae7ea33d9e2004da6ded1c0"],
     "status": "accepted",
     "summary": "Applied pre-commit formatting and lint fixes to audit domain, services, and test modules"
+  },
+  {
+    "audience": null,
+    "breaking": false,
+    "entry_id": "entry-0007",
+    "internal": false,
+    "kind": "changed",
+    "order": 7,
+    "record_revision": 4,
+    "release_version": "0.3.2",
+    "scopes": [],
+    "source_refs": ["git:9f10c3d476e4bbc0326717d5c57613bdb86fa074"],
+    "status": "accepted",
+    "summary": "Changed entry lint to report per-entry issues on failure"
   },
   {
     "audience": null,
