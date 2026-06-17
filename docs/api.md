@@ -1,47 +1,56 @@
-Python API
-==========
+# Python API
 
 Releaseledger exposes a narrow public API through ``releaseledger.api`` modules.
 Integrations should prefer these modules over internal service paths.
 
-Release API
------------
+## Release API
 
+```{eval-rst}
 .. automodule:: releaseledger.api.releases
    :members:
+```
 
-Entry API
----------
+## Entry API
 
+```{eval-rst}
 .. automodule:: releaseledger.api.entries
    :members:
+```
 
-Changelog API
--------------
+## Changelog API
 
+```{eval-rst}
 .. automodule:: releaseledger.api.changelog
    :members:
+```
 
-Config API
-----------
+## Config API
 
+```{eval-rst}
 .. automodule:: releaseledger.api.config
    :members:
+```
 
-Errors
-------
+## Errors
 
+```{eval-rst}
 .. automodule:: releaseledger.errors
    :members:
+```
 
-Domain models
--------------
+## Domain models
 
+```{eval-rst}
 .. automodule:: releaseledger.domain.release
    :members:
+```
 
+```{eval-rst}
 .. automodule:: releaseledger.domain.entry
    :members:
+```
 
+```{eval-rst}
 .. automodule:: releaseledger.domain.event
    :members:
+```

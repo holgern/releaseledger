@@ -1,5 +1,4 @@
-releaseledger
-=============
+# releaseledger
 
 Project-local release management for coding workflows.
 
@@ -8,25 +7,26 @@ events, and deterministic JSON indexes in a project-local or explicitly external
 state directory. It also renders reviewable changelog context and final
 ``CHANGELOG.md`` sections.
 
-.. toctree::
-   :maxdepth: 2
-   :caption: User guide
+```{toctree}
+:maxdepth: 2
+:caption: User guide
 
-   quickstart
-   concepts
-   commands
-   changelog
-   storage
+quickstart
+concepts
+commands
+changelog
+storage
+```
 
-.. toctree::
-   :maxdepth: 2
-   :caption: Reference
+```{toctree}
+:maxdepth: 2
+:caption: Reference
 
-   api
-   development
+api
+development
+```
 
-Design constraints
-------------------
+## Design constraints
 
 Releaseledger is standalone. It depends on ``ledgercore`` for storage and
 reference primitives, but it does not import taskledger or inspect taskledger

@@ -1,8 +1,6 @@
-Concepts
-========
+# Concepts
 
-Git-first
----------
+## Git-first
 
 Releaseledger is git-first. Git tags and commit ranges define the shipped change
 set. The canonical evidence of what shipped is ``git rev-list --reverse --topo-order <base>..<head>``
@@ -11,8 +9,7 @@ set. The canonical evidence of what shipped is ``git rev-list --reverse --topo-o
 Taskledger, issue trackers, and PR descriptions are optional provenance that enrich
 curated entries, but releaseledger works correctly with only git.
 
-Source refs
------------
+## Source refs
 
 A source ref is a coverage identity. Two kinds are accepted:
 
@@ -24,8 +21,7 @@ A source ref is a coverage identity. Two kinds are accepted:
 A ``git-range:*``, ``git-tag:*``, or ``git-branch:*`` ref is a non-coverable
 range marker — useful as release metadata but never creating a missing-coverage row.
 
-Release
--------
+## Release
 
 A release is a versioned record stored as ``release.md`` with YAML front matter
 and an optional Markdown body. It tracks status, previous version, release date,
@@ -45,8 +41,7 @@ previous-version inference and not built into public changelogs by default.
 Canceled releases may carry ``cancel_reason`` and ``superseded_by`` metadata
 and remain visible in ``release list`` as an audit tombstone.
 
-Entry
------
+## Entry
 
 An entry is one release-note item stored under
 ``releases/<version>/entries/entry-NNNN.md``. Entries are grouped by kind for
@@ -69,15 +64,13 @@ Entry kinds are:
 Entry statuses are ``draft``, ``accepted``, and ``rejected``. Changelog builds
 include accepted entries by default.
 
-Event
------
+## Event
 
 Events are append-only operation rows. They do not store wall-clock timestamps
 or before/after deltas. Releaseledger relies on git history for chronological
 review and on per-record revisions for validation.
 
-Commit audit sheet
-------------------
+## Commit audit sheet
 
 A commit audit sheet is a per-release review artifact that maps every commit
 in the selected git range to a reviewer decision and, when applicable, to a
@@ -99,21 +92,18 @@ commit subject.
 This concept keeps Git as the canonical source of shipped changes while making
 the human or agent review work durable and auditable.
 
-Versioning
-----------
+## Versioning
 
 Release and entry files contain ``versioning.schema_version`` and a positive
 ``versioning.revision``. New records start at revision 1, and the revision
 increases by exactly one whenever that record file meaningfully changes.
 
-Index
------
+## Index
 
 Releaseledger rebuilds ``indexes/releases.json`` and ``indexes/entries.json``
 after mutations. Indexes are derived state and should remain deterministic.
 
-Global refs
------------
+## Global refs
 
 External provenance is recorded as caller-supplied global refs, for example
 ``tl:task-0103``. Releaseledger stores these refs but does not resolve or
