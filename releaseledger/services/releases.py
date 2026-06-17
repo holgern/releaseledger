@@ -46,6 +46,8 @@ from releaseledger.services.events import append_event
 from releaseledger.services.git_sources import (
     GIT_DEFAULT_HEAD,
     build_git_range_summary,
+    is_root_base_ref,
+    resolve_base_sha,
     resolve_git_ref,
 )
 from releaseledger.storage.paths import resolve_project_paths
@@ -275,13 +277,14 @@ def _resolve_git_range(
         )
     if head is None:
         head = GIT_DEFAULT_HEAD
-    base_sha = resolve_git_ref(workspace_root, str(base))
+    base_sha = resolve_base_sha(workspace_root, str(base))
     head_sha = resolve_git_ref(workspace_root, str(head))
     summary = build_git_range_summary(
         workspace_root, base_ref=str(base), head_ref=str(head)
     )
+    base_ref_display = ":root" if is_root_base_ref(str(base)) else str(base)
     return {
-        "git_base_ref": str(base),
+        "git_base_ref": base_ref_display,
         "git_base_sha": base_sha,
         "git_head_ref": str(head),
         "git_head_sha": head_sha,

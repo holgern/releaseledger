@@ -148,6 +148,63 @@ def test_git_range_json(tmp_path: Path) -> None:
     assert f"git:{sha_b}" in sha_refs
 
 
+def test_git_range_uses_stored_head_not_current_head(tmp_path: Path) -> None:
+    """Regression: without --head, use the stored release head, not current HEAD."""
+    repo = _init_repo(tmp_path)
+    _commit(repo, "root", "README.md")
+    _git(repo, "tag", "v0.1.0")
+    sha_a = _commit(repo, "feat: add a", "a.txt")
+    sha_b = _commit(repo, "fix: handle b", "b.txt")
+    # Tag the release head at a fixed commit, then move HEAD past it.
+    _git(repo, "tag", "v0.2.0")
+    extra_sha = _commit(repo, "feat: add c", "c.txt")
+    runner.invoke(app, ["--cwd", str(repo), "init"])
+    result = runner.invoke(
+        app,
+        [
+            "--cwd",
+            str(repo),
+            "release",
+            "create",
+            "0.2.0",
+            "--previous",
+            "0.1.0",
+            "--released-at",
+            "2026-06-14",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    result = runner.invoke(
+        app,
+        [
+            "--cwd",
+            str(repo),
+            "release",
+            "update",
+            "0.2.0",
+            "--git-base",
+            "v0.1.0",
+            "--git-head",
+            "v0.2.0",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    # Without --head: stored range v0.1.0..v0.2.0 -> 2 commits, not the extra one.
+    data = _jrun(repo, "git", "range", "0.2.0")
+    assert data["result"]["head_ref"] == "v0.2.0"
+    assert data["result"]["commit_count"] == 2
+    sha_refs = {c["source_ref"] for c in data["result"]["candidates"]}
+    assert f"git:{sha_a}" in sha_refs
+    assert f"git:{sha_b}" in sha_refs
+    assert f"git:{extra_sha}" not in sha_refs
+    # Explicit --head HEAD scans to current HEAD and includes the extra commit.
+    data_head = _jrun(repo, "git", "range", "0.2.0", "--head", "HEAD")
+    assert data_head["result"]["head_ref"] == "HEAD"
+    assert data_head["result"]["commit_count"] == 3
+    head_refs = {c["source_ref"] for c in data_head["result"]["candidates"]}
+    assert f"git:{extra_sha}" in head_refs
+
+
 # --------------------------------------------------------------------------
 # git range --evidence
 # --------------------------------------------------------------------------
@@ -239,6 +296,53 @@ def test_git_range_next_requires_base(tmp_path: Path) -> None:
         ["--cwd", str(repo), "git", "range", "next", "--head", "HEAD"],
     )
     assert result.exit_code != 0
+
+
+def test_git_range_next_root_base_returns_all_commits(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    sha_a = _commit(repo, "feat: add a", "a.txt")
+    sha_b = _commit(repo, "feat: add b", "b.txt")
+    runner.invoke(app, ["--cwd", str(repo), "init"])
+    data = _jrun(repo, "git", "range", "next", "--base", ":root", "--head", "HEAD")
+    assert data["result"]["base_ref"] == ":root"
+    assert data["result"]["commit_count"] == 2
+    refs = {c["source_ref"] for c in data["result"]["candidates"]}
+    assert f"git:{sha_a}" in refs
+    assert f"git:{sha_b}" in refs
+
+
+def test_release_update_root_base_persists_range(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    _commit(repo, "root", "README.md")
+    _commit(repo, "feat: add a", "a.txt")
+    _git(repo, "tag", "v0.1.0")
+    _commit(repo, "feat: add b", "b.txt")
+    _git(repo, "tag", "v0.2.0")
+    runner.invoke(app, ["--cwd", str(repo), "init"])
+    runner.invoke(
+        app,
+        ["--cwd", str(repo), "release", "create", "0.2.0", "--previous", "0.1.0"],
+    )
+    upd = runner.invoke(
+        app,
+        [
+            "--cwd",
+            str(repo),
+            "release",
+            "update",
+            "0.2.0",
+            "--git-base",
+            ":root",
+            "--git-head",
+            "v0.2.0",
+        ],
+    )
+    assert upd.exit_code == 0, upd.output
+    show = _jrun(repo, "release", "show", "0.2.0")
+    release = show["result"]["release"]
+    assert release["git_base_ref"] == ":root"
+    # Empty-tree base covers all commits from the start of the repo (3 total).
+    assert release["git_commit_count"] == 3
 
 
 # --------------------------------------------------------------------------

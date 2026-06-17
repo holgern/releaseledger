@@ -1152,12 +1152,14 @@ def _full_changelog_release_key(record: ReleaseRecord) -> tuple[object, ...]:
 def _render_full_link_refs(
     config: ProjectConfig,
     releases: list[ReleaseRecord],
+    *,
+    include_unreleased: bool = False,
 ) -> dict[str, str]:
     """Build the deterministic link-reference map for the selected release chain.
 
     Includes ``[Unreleased]`` comparing from the newest selected release to HEAD
-    when a repository URL is configured. Returns an empty dict when link refs are
-    disabled or no repository URL is set.
+    when ``include_unreleased`` is true and a repository URL is configured.
+    Returns an empty dict when link refs are disabled or no repository URL is set.
     """
     refs: dict[str, str] = {}
     if not (config.changelog_link_references and config.changelog_repository_url):
@@ -1168,12 +1170,13 @@ def _render_full_link_refs(
             match = _LINK_REF_RE.match(line)
             if match:
                 refs[match.group(1)] = match.group(2)
-    newest = releases[0].version if releases else None
-    unreleased_line = render_unreleased_link(config, newest)
-    if unreleased_line:
-        match = _LINK_REF_RE.match(unreleased_line)
-        if match:
-            refs[match.group(1)] = match.group(2)
+    if include_unreleased:
+        newest = releases[0].version if releases else None
+        unreleased_line = render_unreleased_link(config, newest)
+        if unreleased_line:
+            match = _LINK_REF_RE.match(unreleased_line)
+            if match:
+                refs[match.group(1)] = match.group(2)
     return refs
 
 
@@ -1199,13 +1202,12 @@ def render_full_changelog_document(
     if preamble.strip():
         parts.append("")
         parts.append(preamble.strip())
-    if is_kac or config.changelog_unreleased or unreleased_body.strip():
+    body = unreleased_body.strip("\n")
+    if body:
         parts.append("")
         parts.append("## [Unreleased]")
-        body = unreleased_body.strip("\n")
-        if body:
-            parts.append("")
-            parts.append(body)
+        parts.append("")
+        parts.append(body)
     for section in sections:
         section = section.strip("\n")
         if not section:
@@ -1224,6 +1226,116 @@ def render_full_changelog_document(
     return _ensure_final_newline(document)
 
 
+def render_release_groups_body(
+    workspace_root: Path,
+    *,
+    version: str,
+    include_internal: bool = False,
+    template_name: str = "default",
+    include_statuses: tuple[str, ...] = ("accepted",),
+) -> dict[str, object]:
+    """Render a release's entries as grouped body text without a version heading.
+
+    Used to fold a ``planned``/``draft``/``candidate`` release into the canonical
+    ``## [Unreleased]`` section. Renders the configured body template with
+    ``unreleased=True`` and strips the leading ``## [VERSION] - Unreleased``
+    heading line so only the groups remain. Returns the body text and the
+    included entry count.
+    """
+    paths = resolve_project_paths(workspace_root)
+    config = _load_config(paths)
+    template_config = _resolve_template_profile(config, template_name)
+    context = build_changelog_render_context(
+        workspace_root,
+        version=version,
+        include_internal=include_internal,
+        unreleased=True,
+        include_statuses=include_statuses,
+    )
+    trim_blocks = bool(template_config.get("trim", config.changelog_trim))
+    env = _make_environment(trim_blocks=trim_blocks, lstrip_blocks=trim_blocks)
+    body_template = template_config.get("body", config.changelog_body)
+    rendered = _render_template(env, body_template, dict(context))
+    out: list[str] = []
+    skipped = False
+    for line in rendered.splitlines():
+        if not skipped and _LEVEL2_RE.match(line):
+            skipped = True
+            continue
+        out.append(line)
+    body = "\n".join(out).strip("\n")
+    postprocessors = template_config.get(
+        "postprocessors", config.changelog_postprocessors
+    )
+    body = _apply_postprocessors(body, postprocessors)
+    body = ledgercore.normalize_newlines(body).strip("\n")
+    release_payload = context["release"]
+    assert isinstance(release_payload, dict)
+    entry_count = int(release_payload.get("entry_count", 0))
+    return {"body": body, "entry_count": entry_count}
+
+
+def _validate_folded_unreleased_strict(
+    workspace_root: Path,
+    *,
+    folded: ReleaseRecord,
+    include_internal: bool,
+    statuses: tuple[str, ...],
+    allow_empty: bool,
+    warnings: list[str],
+) -> None:
+    """Apply strict lint/coverage/entries checks to a folded unreleased release.
+
+    Skips the released_at requirement (the folded release is intentionally
+    unreleased) but still requires entries, lint success, and source-ref coverage.
+    """
+    unreleased_version = folded.version
+    folded_entries = [
+        entry
+        for entry in load_entries(workspace_root, unreleased_version)
+        if entry.status in statuses and (include_internal or not entry.internal)
+    ]
+    folded_lint = lint_release_entries(
+        workspace_root,
+        release_version=unreleased_version,
+        strict=False,
+        include_statuses=statuses,
+    )
+    folded_summary = folded_lint["summary"]
+    assert isinstance(folded_summary, dict)
+    if int(folded_summary["errors"]) > 0:
+        raise LaunchError(
+            f"Strict full build blocked by entry lint errors for folded "
+            f"unreleased {unreleased_version}.",
+            code=CODE_VALIDATION_ERROR,
+            exit_code=2,
+        )
+    if not folded_entries and not allow_empty:
+        raise LaunchError(
+            f"Strict full build requires at least one included entry for "
+            f"folded unreleased {unreleased_version}; pass --allow-empty.",
+            code=CODE_VALIDATION_ERROR,
+            exit_code=2,
+        )
+    release_refs = set(folded.source_refs)
+    if folded.boundary_ref:
+        release_refs.add(folded.boundary_ref)
+    entry_refs = {ref for entry in folded_entries for ref in entry.source_refs}
+    uncovered = sorted(release_refs - entry_refs)
+    if uncovered and not allow_empty:
+        raise LaunchError(
+            f"Strict full build for folded unreleased {unreleased_version} has "
+            "release source refs not referenced by entries: " + ", ".join(uncovered),
+            code=CODE_VALIDATION_ERROR,
+            exit_code=2,
+        )
+    if int(folded_summary["warnings"]) > 0:
+        warnings.append(
+            f"{unreleased_version}: entry lint reported "
+            f"{folded_summary['warnings']} warning(s)."
+        )
+
+
 def build_full_changelog_file(
     workspace_root: Path,
     *,
@@ -1236,6 +1348,7 @@ def build_full_changelog_file(
     strict: bool = False,
     allow_empty: bool = False,
     preserve_unreleased: bool = True,
+    unreleased_version: str | None = None,
 ) -> dict[str, object]:
     """Rebuild the full changelog target from releaseledger state.
 
@@ -1274,6 +1387,41 @@ def build_full_changelog_file(
     sections: list[str] = []
     results: list[dict[str, object]] = []
     warnings: list[str] = []
+    unreleased_version_rendered: str | None = None
+    unreleased_entry_count = 0
+    if unreleased_version:
+        folded = load_release(workspace_root, unreleased_version)
+        if folded.status not in {"planned", "draft", "candidate"}:
+            raise LaunchError(
+                f"--unreleased-version {unreleased_version} requires a release "
+                f"with status planned, draft, or candidate (got {folded.status!r}).",
+                code=CODE_VALIDATION_ERROR,
+                exit_code=2,
+            )
+        if strict:
+            _validate_folded_unreleased_strict(
+                workspace_root,
+                folded=folded,
+                include_internal=include_internal,
+                statuses=statuses,
+                allow_empty=allow_empty,
+                warnings=warnings,
+            )
+        rendered_unreleased = render_release_groups_body(
+            workspace_root,
+            version=unreleased_version,
+            include_internal=include_internal,
+            template_name=template_name,
+            include_statuses=statuses,
+        )
+        folded_body = str(rendered_unreleased["body"])
+        if folded_body.strip():
+            unreleased_body = folded_body
+            unreleased_version_rendered = unreleased_version
+            unreleased_entry_count = int(rendered_unreleased["entry_count"])
+        # Exclude the folded release from normal release sections.
+        selected = [r for r in selected if r.version != unreleased_version]
+
     for release in selected:
         version = release.version
         version_entries = [
@@ -1349,7 +1497,9 @@ def build_full_changelog_file(
             }
         )
 
-    link_refs = _render_full_link_refs(config, selected)
+    link_refs = _render_full_link_refs(
+        config, selected, include_unreleased=bool(unreleased_body.strip())
+    )
     document = render_full_changelog_document(
         config=config,
         sections=sections,
@@ -1373,6 +1523,9 @@ def build_full_changelog_file(
         "unreleased_preserved": bool(preserve_unreleased) and bool(unreleased_body),
         "document": document,
         "warnings": warnings,
+        "unreleased_version": unreleased_version_rendered,
+        "unreleased_entry_count": unreleased_entry_count,
+        "unreleased_rendered": unreleased_version_rendered is not None,
     }
 
     if dry_run:

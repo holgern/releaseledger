@@ -39,6 +39,7 @@ Releaseledger is separate from taskledger. Do not treat `.releaseledger/` as tas
   Accept taskledger evidence only as caller-supplied context and global refs.
 - Do not use git commit messages as changelog entries. Do not paste, paraphrase, title-case, or mechanically convert commit subjects into `summary` values. A commit message is only provenance for locating evidence.
 - Do not run multiple releaseledger mutating commands concurrently. Especially do not fan out `entry add` calls. Use `entry add-many ... --dry-run` followed by one `entry add-many`, or run single mutating commands sequentially and re-read state after any failure.
+- During normal release work, do not inspect `releaseledger` package internals. If CLI output is insufficient, first try the JSON form of the public command. If the JSON form is still insufficient, write a change request and stop using source code as a workaround unless the user explicitly asks for releaseledger debugging.
 
 ## Core agent command path
 
@@ -205,6 +206,8 @@ releaseledger entry list VERSION
 Batch creation validates every entry before writing any entry. If any item is
 invalid, correct the YAML and rerun the dry run; do not add entries one at a
 time to bypass atomic validation.
+
+For batch imports, verify fields with `releaseledger --json entry add-many VERSION --file FILE --dry-run` and inspect `result.entries[*].internal`, `breaking`, and other fields before assuming the batch parser dropped a field.
 
 ## Changelog source protocol
 

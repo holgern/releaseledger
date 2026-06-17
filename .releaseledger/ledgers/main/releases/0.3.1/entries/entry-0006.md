@@ -12,10 +12,10 @@ status: accepted
 audience: null
 scopes: []
 source_refs:
-- git:efa0d2401d66242e20ede1ec5bfef43e8e601798
+  - git:efa0d2401d66242e20ede1ec5bfef43e8e601798
 paths:
-- CHANGELOG.md
-- ARCHITECTURE.md
+  - CHANGELOG.md
+  - ARCHITECTURE.md
 issues: []
 prs: []
 sources: []

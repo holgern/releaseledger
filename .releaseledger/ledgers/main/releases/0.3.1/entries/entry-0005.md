@@ -12,9 +12,9 @@ status: accepted
 audience: null
 scopes: []
 source_refs:
-- git:200ede51c55086126ae7ea33d9e2004da6ded1c0
+  - git:200ede51c55086126ae7ea33d9e2004da6ded1c0
 paths:
-- pyproject.toml
+  - pyproject.toml
 issues: []
 prs: []
 sources: []

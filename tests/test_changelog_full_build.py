@@ -186,10 +186,10 @@ class TestFullBuild:
         result = _run(tmp_path, "build")
         assert result.exit_code == 0, _human_error(result)
         text = (tmp_path / "CHANGELOG.md").read_text()
-        # Headings should be: # Changelog, ## [Unreleased], ## [0.2.0], ## [0.1.0]
+        # Headings should be: # Changelog, ## [0.2.0], ## [0.1.0].
+        # ## [Unreleased] is omitted when there is no unreleased body.
         headings = [line for line in text.splitlines() if line.startswith("## ")]
         assert headings == [
-            "## [Unreleased]",
             "## [0.2.0] - 2026-02-20",
             "## [0.1.0] - 2026-01-10",
         ]
@@ -220,8 +220,8 @@ class TestFullBuild:
         assert result.exit_code == 0, _human_error(result)
         text = (tmp_path / "CHANGELOG.md").read_text()
         assert "- Pending work item" not in text
-        # Unreleased section still present (empty body).
-        assert "## [Unreleased]" in text
+        # No unreleased body: the heading is omitted (and so is its link ref).
+        assert "## [Unreleased]" not in text
 
     def test_full_build_excludes_planned_and_canceled(self, tmp_path: Path) -> None:
         _init_project(tmp_path)
@@ -412,11 +412,34 @@ class TestFullBuild:
         result = _run(tmp_path, "build")
         assert result.exit_code == 0, _human_error(result)
         text = (tmp_path / "CHANGELOG.md").read_text()
-        assert (
-            "[Unreleased]: https://example.com/owner/repo/compare/v0.2.0...HEAD" in text
-        )  # noqa: E501
+        # No unreleased body: the [Unreleased] link ref is omitted.
+        assert "[Unreleased]:" not in text
         assert "[0.2.0]: https://example.com/owner/repo/compare/v0.1.0...v0.2.0" in text
         assert "[0.1.0]: https://example.com/owner/repo/releases/tag/v0.1.0" in text
+        assert "[0.2.0]: https://example.com/owner/repo/compare/v0.1.0...v0.2.0" in text
+        assert "[0.1.0]: https://example.com/owner/repo/releases/tag/v0.1.0" in text
+
+    def test_link_refs_include_unreleased_when_body_present(
+        self, tmp_path: Path
+    ) -> None:
+        _init_project(tmp_path)
+        _write_keepachangelog_config(
+            tmp_path, repository_url="https://example.com/owner/repo"
+        )
+        _seed_release(tmp_path, "0.1.0", released_at="2026-01-10", summary="First")
+        # Seed a non-empty unreleased body so the ## [Unreleased] section renders.
+        (tmp_path / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## [Unreleased]\n\n- Pending work item\n\n"
+        )
+        result = _run(tmp_path, "build")
+        assert result.exit_code == 0, _human_error(result)
+        text = (tmp_path / "CHANGELOG.md").read_text()
+        assert "## [Unreleased]" in text
+        assert "- Pending work item" in text
+        # With a body present, the [Unreleased] link ref is regenerated.
+        assert (
+            "[Unreleased]: https://example.com/owner/repo/compare/v0.1.0...HEAD" in text
+        )  # noqa: E501
 
     def test_full_build_dry_run_does_not_write(self, tmp_path: Path) -> None:
         self._seed_two_releases(tmp_path)
@@ -424,3 +447,89 @@ class TestFullBuild:
         assert result.exit_code == 0, _human_error(result)
         assert not (tmp_path / "CHANGELOG.md").exists()
         assert "## [0.2.0]" in result.stdout
+
+
+class TestUnreleasedVersionFolding:
+    def _seed_released_and_planned(self, tmp_path: Path) -> None:
+        _init_project(tmp_path)
+        _write_keepachangelog_config(tmp_path)
+        _seed_release(
+            tmp_path,
+            "0.1.0",
+            released_at="2026-01-10",
+            summary="Add first feature",
+        )
+        # A planned release with one accepted entry and no released_at.
+        assert (
+            _run(
+                tmp_path,
+                "release",
+                "create",
+                "0.2.0",
+                "--previous",
+                "0.1.0",
+            ).exit_code
+            == 0
+        )
+        assert (
+            _run(
+                tmp_path,
+                "entry",
+                "add",
+                "0.2.0",
+                "--kind",
+                "added",
+                "--summary",
+                "Added second feature",
+            ).exit_code
+            == 0
+        )
+
+    def test_unreleased_version_folds_planned(self, tmp_path: Path) -> None:
+        self._seed_released_and_planned(tmp_path)
+        result = _run(tmp_path, "build", "--all", "--unreleased-version", "0.2.0")
+        assert result.exit_code == 0, _human_error(result)
+        text = (tmp_path / "CHANGELOG.md").read_text()
+        # The planned release's entries fold into ## [Unreleased].
+        assert "## [Unreleased]" in text
+        assert "- Added second feature" in text
+        # No versioned heading for the folded release.
+        assert "## [0.2.0]" not in text
+        # The released 0.1.0 still renders normally.
+        assert "## [0.1.0] - 2026-01-10" in text
+
+    def test_unreleased_version_json_payload(self, tmp_path: Path) -> None:
+        self._seed_released_and_planned(tmp_path)
+        payload = _json(_jrun(tmp_path, "build", "--unreleased-version", "0.2.0"))
+        result = payload["result"]
+        assert result["unreleased_version"] == "0.2.0"
+        assert result["unreleased_entry_count"] == 1
+        assert result["unreleased_rendered"] is True
+
+    def test_unreleased_version_strict_passes_without_date(
+        self, tmp_path: Path
+    ) -> None:
+        self._seed_released_and_planned(tmp_path)
+        result = _run(
+            tmp_path, "build", "--all", "--unreleased-version", "0.2.0", "--strict"
+        )
+        assert result.exit_code == 0, _human_error(result)
+
+    def test_unreleased_version_rejects_released(self, tmp_path: Path) -> None:
+        self._seed_released_and_planned(tmp_path)
+        result = _run(tmp_path, "build", "--all", "--unreleased-version", "0.1.0")
+        assert result.exit_code != 0
+        assert "planned, draft, or candidate" in _human_error(result)
+
+    def test_unreleased_version_rejects_missing(self, tmp_path: Path) -> None:
+        _init_project(tmp_path)
+        _write_keepachangelog_config(tmp_path)
+        result = _run(tmp_path, "build", "--all", "--unreleased-version", "9.9.9")
+        assert result.exit_code != 0
+
+    def test_unreleased_version_requires_full_build(self, tmp_path: Path) -> None:
+        _init_project(tmp_path)
+        _write_keepachangelog_config(tmp_path)
+        result = _run(tmp_path, "build", "0.2.0", "--unreleased-version", "0.2.0")
+        assert result.exit_code != 0
+        assert "full builds" in _human_error(result)

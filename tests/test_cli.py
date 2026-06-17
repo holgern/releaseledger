@@ -292,6 +292,63 @@ class TestPhase3Releases:
         assert "version: 1.2.0" in result.stdout
         assert "status: planned" in result.stdout
 
+    def test_release_show_text_includes_git_range_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        _init_project(tmp_path)
+        env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "Tester",
+            "GIT_AUTHOR_EMAIL": "tester@example.com",
+            "GIT_COMMITTER_NAME": "Tester",
+            "GIT_COMMITTER_EMAIL": "tester@example.com",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "HOME": str(tmp_path),
+        }
+        subprocess.run(
+            ["git", "init", "-q", "-b", "main", str(tmp_path)],
+            check=True,
+            env=env,
+        )
+        (tmp_path / "README.md").write_text("init\n")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True, env=env)
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "commit", "-q", "-m", "root"],
+            check=True,
+            env=env,
+        )
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "tag", "v0.1.0"], check=True, env=env
+        )
+        (tmp_path / "a.txt").write_text("a\n")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True, env=env)
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "commit", "-q", "-m", "feat: add a"],
+            check=True,
+            env=env,
+        )
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "tag", "v0.2.0"], check=True, env=env
+        )
+        _run(tmp_path, "release", "create", "0.2.0", "--previous", "0.1.0")
+        upd = _run(
+            tmp_path,
+            "release",
+            "update",
+            "0.2.0",
+            "--git-base",
+            "v0.1.0",
+            "--git-head",
+            "v0.2.0",
+        )
+        assert upd.exit_code == 0, _human_error(upd)
+        result = _run(tmp_path, "release", "show", "0.2.0")
+        assert result.exit_code == 0, result.stdout
+        assert "git_base_ref: v0.1.0" in result.stdout
+        assert "git_head_ref: v0.2.0" in result.stdout
+        assert "git_range:" in result.stdout
+        assert "git_commit_count:" in result.stdout
+
     def test_release_show_not_found(self, tmp_path: Path) -> None:
         _init_project(tmp_path)
         result = _run(tmp_path, "release", "show", "9.9.9")
@@ -1531,3 +1588,78 @@ class TestPhase11EntrySources:
         payload = _json(_jrun(tmp_path, "entry", "list", "1.0.0"))
         entries = payload["result"]["entries"]
         assert entries[0]["sources"] == ["taskledger:task-0001"]
+
+
+# ---------------------------------------------------------------------------
+# Entry lint failure output (actionable per-entry issues)
+# ---------------------------------------------------------------------------
+
+
+def _seed_lint_warnings(tmp_path: Path) -> None:
+    """Seed a release with one accepted entry that triggers lint warnings."""
+    _init_project(tmp_path)
+    assert _run(tmp_path, "release", "create", "1.0.0").exit_code == 0
+    assert (
+        _run(
+            tmp_path,
+            "entry",
+            "add",
+            "1.0.0",
+            "--kind",
+            "changed",
+            "--summary",
+            "Changed release workflow.",
+        ).exit_code
+        == 0
+    )
+
+
+def test_entry_lint_json_failure_includes_result_and_error(tmp_path: Path) -> None:
+    _seed_lint_warnings(tmp_path)
+    result = _jrun(tmp_path, "entry", "lint", "1.0.0", "--strict")
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["command"] == "entry.lint"
+    assert payload["result_type"] == "entry_lint"
+    # The full result (issues + entries) is present even on failure.
+    assert "result" in payload
+    assert "issues" in payload["result"]
+    assert "entries" in payload["result"]
+    assert payload["error"]["code"] == "VALIDATION_ERROR"
+    assert "Entry lint failed" in payload["error"]["message"]
+    codes = {issue["code"] for issue in payload["result"]["issues"]}
+    assert "trailing_period" in codes
+
+
+def test_entry_lint_text_failure_lists_issues(tmp_path: Path) -> None:
+    _seed_lint_warnings(tmp_path)
+    result = _run(tmp_path, "entry", "lint", "1.0.0", "--strict")
+    assert result.exit_code != 0
+    text = _human_error(result)
+    assert "Entry lint failed" in text
+    # The per-entry issues are listed with severity/field/code and message.
+    assert "trailing_period" in text
+    assert "should not end with a period" in text
+    assert "entry-0001" in text
+
+
+def test_entry_lint_pass_payload_unchanged(tmp_path: Path) -> None:
+    _init_project(tmp_path)
+    assert _run(tmp_path, "release", "create", "1.0.0").exit_code == 0
+    assert (
+        _run(
+            tmp_path,
+            "entry",
+            "add",
+            "1.0.0",
+            "--kind",
+            "added",
+            "--summary",
+            "Added clean entry",
+        ).exit_code
+        == 0
+    )
+    payload = _json(_jrun(tmp_path, "entry", "lint", "1.0.0"))
+    assert payload["ok"] is True
+    assert payload["result"]["summary"] == {"errors": 0, "warnings": 0}

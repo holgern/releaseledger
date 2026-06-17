@@ -30,6 +30,30 @@ rebuilds the **complete** target file from ledger state:
 - Full rebuild preserves the ``## [Unreleased]`` body by default
   (``--no-preserve-unreleased`` clears it) and is a whole-file rewrite (no
   ``--replace-existing``).
+- An **empty** ``## [Unreleased]`` section is omitted: the heading (and its
+  link reference) is rendered only when an unreleased body exists.
+- ``--unreleased-version VERSION`` folds a ``planned``/``draft``/``candidate``
+  release's accepted entries into the canonical ``## [Unreleased]`` section
+  without a version heading, and excludes that release from the normal release
+  sections. It is rejected for a missing, ``canceled``, ``yanked``, or already
+  ``released`` version, and is valid only for full builds.
+
+Group modes
+-----------
+
+Entry kinds are grouped for rendering. The mode is set by
+``changelog_group_mode`` in ``[changelog]``.
+
+- ``keepachangelog`` (Keep a Changelog 1.1.0) renders exactly six groups in
+  order: ``Added``, ``Changed``, ``Deprecated``, ``Removed``, ``Fixed``,
+  ``Security``. Extended kinds map onto these groups:
+
+  - ``docs -> changed``
+  - ``quality -> changed``
+  - ``internal -> changed`` (hidden unless ``--include-internal``)
+
+- ``extended`` (the default) renders ``Documentation``, ``Quality``, and
+  ``Internal`` as their own groups alongside the Keep a Changelog groups.
 
 Default template
 ----------------

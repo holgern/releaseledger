@@ -47,6 +47,9 @@ __all__ = [
     "collect_git_candidates",
     "is_git_worktree",
     "resolve_git_ref",
+    "EMPTY_TREE_SHA",
+    "is_root_base_ref",
+    "resolve_base_sha",
 ]
 
 
@@ -55,6 +58,24 @@ GIT_DEFAULT_INCLUDE_MERGES = "nontrivial"
 GIT_DEFAULT_MAX_DIFF_CHARS = 12000
 GIT_DEFAULT_MAX_COMMITS = 500
 MERGE_POLICIES = ("never", "always", "nontrivial")
+
+# Empty-tree object SHA: the canonical "start of repository" base for first
+# releases. It is a tree object, not a commit, so it needs special handling.
+EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+ROOT_BASE_REFS = {":root", "ROOT", "EMPTY", EMPTY_TREE_SHA}
+
+
+def is_root_base_ref(ref: str) -> bool:
+    """Return True when ``ref`` is a first-release "start of repo" base."""
+    return ref in ROOT_BASE_REFS
+
+
+def resolve_base_sha(workspace_root: Path, base_ref: str) -> str:
+    """Resolve a base ref to a SHA, mapping the root sentinel to the empty tree."""
+    if is_root_base_ref(base_ref):
+        return EMPTY_TREE_SHA
+    return resolve_git_ref(workspace_root, base_ref)
+
 
 # Conventional-commit prefix -> releaseledger entry kind inference.
 # Used for candidate entries; review/strict only WARNs on uncertain inference.
@@ -319,20 +340,28 @@ def collect_git_candidates(
         )
     if require_clean_worktree:
         _require_clean(workspace_root)
-    base_sha = resolve_git_ref(workspace_root, base_ref)
-    head_sha = resolve_git_ref(workspace_root, head_ref)
-    if base_sha == head_sha:
-        return []
-    _verify_ancestry(
-        workspace_root,
-        base_sha=base_sha,
-        head_sha=head_sha,
-        allow_diverged=allow_diverged_base,
-    )
-    rev_list = _run_git(
-        workspace_root,
-        ["rev-list", "--reverse", "--topo-order", f"{base_sha}..{head_sha}"],
-    )
+    if is_root_base_ref(base_ref):
+        base_sha = EMPTY_TREE_SHA
+        head_sha = resolve_git_ref(workspace_root, head_ref)
+        rev_list_args = ["rev-list", "--reverse", "--topo-order", head_sha]
+    else:
+        base_sha = resolve_git_ref(workspace_root, base_ref)
+        head_sha = resolve_git_ref(workspace_root, head_ref)
+        if base_sha == head_sha:
+            return []
+        _verify_ancestry(
+            workspace_root,
+            base_sha=base_sha,
+            head_sha=head_sha,
+            allow_diverged=allow_diverged_base,
+        )
+        rev_list_args = [
+            "rev-list",
+            "--reverse",
+            "--topo-order",
+            f"{base_sha}..{head_sha}",
+        ]
+    rev_list = _run_git(workspace_root, rev_list_args)
     _require_git_available(rev_list, what="git rev-list")
     shas = [line.strip() for line in rev_list.stdout.splitlines() if line.strip()]
     if len(shas) > max_commits:
@@ -598,18 +627,25 @@ def build_git_range_summary(
     candidate entries the merge policy produced.
     """
     _check_git_installed()
-    base_sha = resolve_git_ref(workspace_root, base_ref)
     head_sha = resolve_git_ref(workspace_root, head_ref)
-    _verify_ancestry(
-        workspace_root,
-        base_sha=base_sha,
-        head_sha=head_sha,
-        allow_diverged=allow_diverged_base,
-    )
-    rev_list = _run_git(
-        workspace_root,
-        ["rev-list", "--reverse", "--topo-order", f"{base_sha}..{head_sha}"],
-    )
+    if is_root_base_ref(base_ref):
+        base_sha = EMPTY_TREE_SHA
+        rev_list_args = ["rev-list", "--reverse", "--topo-order", head_sha]
+    else:
+        base_sha = resolve_git_ref(workspace_root, base_ref)
+        _verify_ancestry(
+            workspace_root,
+            base_sha=base_sha,
+            head_sha=head_sha,
+            allow_diverged=allow_diverged_base,
+        )
+        rev_list_args = [
+            "rev-list",
+            "--reverse",
+            "--topo-order",
+            f"{base_sha}..{head_sha}",
+        ]
+    rev_list = _run_git(workspace_root, rev_list_args)
     _require_git_available(rev_list, what="git rev-list")
     all_shas = [line.strip() for line in rev_list.stdout.splitlines() if line.strip()]
     merge_count = 0
@@ -631,7 +667,11 @@ def build_git_range_summary(
         "base_sha": base_sha,
         "head_ref": head_ref,
         "head_sha": head_sha,
-        "range": f"{base_sha}..{head_sha}",
+        "range": (
+            f":root..{head_sha}"
+            if is_root_base_ref(base_ref)
+            else f"{base_sha}..{head_sha}"
+        ),
         "commit_count": len(all_shas),
         "merge_commit_count": merge_count,
         "merge_commits_skipped": (
@@ -650,7 +690,12 @@ def net_diff_paths(
     Useful for review path-coverage warnings (design §3.3). Does not block
     strict mode unless explicitly enabled.
     """
-    base_sha = resolve_git_ref(workspace_root, base_ref)
+    base_sha = resolve_base_sha(workspace_root, base_ref)
+    head_sha = resolve_git_ref(workspace_root, head_ref)
+    result = _run_git(
+        workspace_root,
+        ["diff", "--name-status", "--find-renames", f"{base_sha}..{head_sha}"],
+    )
     head_sha = resolve_git_ref(workspace_root, head_ref)
     result = _run_git(
         workspace_root,
@@ -671,7 +716,9 @@ def net_diff_stat(
     workspace_root: Path, *, base_ref: str, head_ref: str = GIT_DEFAULT_HEAD
 ) -> str:
     """Return ``git diff --stat`` for ``base..head``."""
-    base_sha = resolve_git_ref(workspace_root, base_ref)
+    base_sha = resolve_base_sha(workspace_root, base_ref)
+    head_sha = resolve_git_ref(workspace_root, head_ref)
+    result = _run_git(workspace_root, ["diff", "--stat", f"{base_sha}..{head_sha}"])
     head_sha = resolve_git_ref(workspace_root, head_ref)
     result = _run_git(workspace_root, ["diff", "--stat", f"{base_sha}..{head_sha}"])
     _require_git_available(result, what="git diff --stat")

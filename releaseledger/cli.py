@@ -69,6 +69,8 @@ from releaseledger.services.git_sources import (
     GIT_DEFAULT_INCLUDE_MERGES,
     GitSourceCandidate,
     collect_git_candidates,
+    is_root_base_ref,
+    resolve_base_sha,
     resolve_git_ref,
 )
 from releaseledger.services.releases import (
@@ -518,6 +520,14 @@ def release_show_command(
             lines.append(f"released_at: {record['released_at']}")
         if record.get("previous_version"):
             lines.append(f"previous_version: {record['previous_version']}")
+        if record.get("git_base_ref"):
+            lines.append(f"git_base_ref: {record['git_base_ref']}")
+        if record.get("git_head_ref"):
+            lines.append(f"git_head_ref: {record['git_head_ref']}")
+        if record.get("git_range"):
+            lines.append(f"git_range: {record['git_range']}")
+        if record.get("git_commit_count") is not None:
+            lines.append(f"git_commit_count: {record['git_commit_count']}")
         lines.append(f"entry_count: {result.get('entry_count', 0)}")
         note = record.get("note")
         if note:
@@ -1073,6 +1083,21 @@ def entry_list_command(
     )
 
 
+def _render_lint_issues(issues: list[dict[str, object]]) -> str:
+    """Format per-entry lint issues as aligned rows plus their messages."""
+    lines: list[str] = []
+    for issue in issues:
+        entry_id = str(issue.get("entry_id") or "-")
+        severity = str(issue.get("severity", ""))
+        field = str(issue.get("field", ""))
+        code = str(issue.get("code", ""))
+        message = str(issue.get("message", ""))
+        lines.append(f"{entry_id}  {severity}  {field}  {code}")
+        if message:
+            lines.append(f"  {message}")
+    return "\n".join(lines)
+
+
 @entry_app.command("lint")
 def entry_lint_command(
     ctx: typer.Context,
@@ -1082,10 +1107,14 @@ def entry_lint_command(
         list[str] | None, typer.Option("--include-status")
     ] = None,
 ) -> None:
-    """Lint release entries and optionally fail on warnings."""
-    state = cli_state_from_context(ctx)
+    """Lint release entries and optionally fail on warnings.
 
-    def produce() -> CommandResult:
+    On failure the command still emits the full per-entry ``issues`` and
+    ``entries`` payload (JSON ``result`` plus the standard ``error`` envelope),
+    and exits non-zero. ``--strict`` fails on warnings as today.
+    """
+    state = cli_state_from_context(ctx)
+    try:
         result = lint_release_entries(
             _paths(ctx).workspace_root,
             release_version=version,
@@ -1094,29 +1123,47 @@ def entry_lint_command(
                 tuple(include_statuses) if include_statuses is not None else None
             ),
         )
-        if not result["passed"]:
-            summary = result["summary"]
-            assert isinstance(summary, dict)
-            raise ReleaseledgerError(
-                f"Entry lint failed with {summary['errors']} error(s) and "
-                f"{summary['warnings']} warning(s).",
-                code="VALIDATION_ERROR",
-                exit_code=2,
-            )
-        summary = result["summary"]
-        assert isinstance(summary, dict)
-        human = (
-            f"entry lint passed: {summary['errors']} error(s), "
-            f"{summary['warnings']} warning(s)"
-        )
-        return result, [], human
+    except ReleaseledgerError as exc:
+        emit_error(command="entry.lint", error=exc, json_output=state.json_output)
+        raise typer.Exit(launch_error_exit_code(exc)) from exc
 
-    run_command(
-        command="entry.lint",
-        result_type="entry_lint",
-        json_output=state.json_output,
-        produce=produce,
+    summary = result["summary"]
+    assert isinstance(summary, dict)
+    errors = int(summary["errors"])
+    warnings = int(summary["warnings"])
+
+    if result["passed"]:
+        human = f"entry lint passed: {errors} error(s), {warnings} warning(s)"
+        emit_payload(
+            command="entry.lint",
+            result_type="entry_lint",
+            result=result,
+            human=human,
+            json_output=state.json_output,
+        )
+        return
+
+    lint_error = ReleaseledgerError(
+        f"Entry lint failed with {errors} error(s) and {warnings} warning(s).",
+        code="VALIDATION_ERROR",
+        exit_code=2,
     )
+    if state.json_output:
+        payload: dict[str, object] = {
+            "ok": False,
+            "command": "entry.lint",
+            "result_type": "entry_lint",
+            "result": result,
+            "error": lint_error.to_payload(),
+        }
+        typer.echo(render_json(payload))
+    else:
+        typer.echo(lint_error.message, err=True)
+        issues = result.get("issues", [])
+        if isinstance(issues, list) and issues:
+            typer.echo("", err=True)
+            typer.echo(_render_lint_issues(issues), err=True)
+    raise typer.Exit(launch_error_exit_code(lint_error))
 
 
 @entry_app.command("prompt")
@@ -1511,6 +1558,16 @@ def build_command(
             help="Preserve the existing Unreleased body (full build).",
         ),
     ] = True,
+    unreleased_version: Annotated[
+        str | None,
+        typer.Option(
+            "--unreleased-version",
+            help=(
+                "Fold a planned/draft/candidate release into "
+                "## [Unreleased] (full build only)."
+            ),
+        ),
+    ] = None,
     format_name: Annotated[
         str,
         typer.Option("--format", help="Output format: markdown or json."),
@@ -1548,6 +1605,18 @@ def build_command(
         )
         emit_error(command="build", error=err, json_output=state.json_output)
         raise typer.Exit(launch_error_exit_code(err)) from err
+    if unreleased_version is not None and not full_build:
+        err = ReleaseledgerError(
+            "--unreleased-version is valid only for full builds "
+            "(build --all or build with no VERSION).",
+            code="USAGE_ERROR",
+            exit_code=2,
+            remediation=[
+                "Use `releaseledger build --all --unreleased-version VERSION`."
+            ],
+        )
+        emit_error(command="build", error=err, json_output=state.json_output)
+        raise typer.Exit(launch_error_exit_code(err)) from err
     try:
         workspace_root = _paths(ctx).workspace_root
         if full_build:
@@ -1564,6 +1633,7 @@ def build_command(
                 strict=strict,
                 allow_empty=allow_empty,
                 preserve_unreleased=preserve_unreleased,
+                unreleased_version=unreleased_version,
             )
         else:
             assert version is not None
@@ -1731,8 +1801,11 @@ def git_range_command(
     ] = "",
     head: Annotated[
         str,
-        typer.Option("--head", help="Head ref (default HEAD); resolved to a full SHA."),
-    ] = GIT_DEFAULT_HEAD,
+        typer.Option(
+            "--head",
+            help="Head ref; defaults to the stored release head, then HEAD.",
+        ),
+    ] = "",
     include_merges: Annotated[
         str,
         typer.Option(
@@ -1774,7 +1847,7 @@ def git_range_command(
             workspace_root,
             display_version="next",
             base=base,
-            head=head,
+            head=head or GIT_DEFAULT_HEAD,
             include_merges=include_merges,
             evidence=evidence,
         )
@@ -1845,7 +1918,7 @@ def _run_git_range(
             head_ref=head,
             include_merges=include_merges,
         )
-        base_sha = resolve_git_ref(workspace_root, base)
+        base_sha = resolve_base_sha(workspace_root, base)
         head_sha = resolve_git_ref(workspace_root, head)
     except LaunchError as exc:
         emit_error(command="git.range", error=exc, json_output=state.json_output)
@@ -1863,14 +1936,18 @@ def _run_git_range(
     if skipped < 0:
         skipped = 0
 
+    base_ref_display = ":root" if is_root_base_ref(base) else base
+    range_str = (
+        f":root..{head_sha}" if is_root_base_ref(base) else f"{base_sha}..{head_sha}"
+    )
     result: dict[str, object] = {
         "kind": "git_range",
         "version": display_version,
-        "base_ref": base,
+        "base_ref": base_ref_display,
         "base_sha": base_sha,
         "head_ref": head,
         "head_sha": head_sha,
-        "range": f"{base_sha}..{head_sha}",
+        "range": range_str,
         "commit_count": len(candidates) + skipped,
         "merge_commits_skipped": skipped,
         "candidate_count": len(candidates),

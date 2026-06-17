@@ -17,7 +17,9 @@ from releaseledger.services.git_sources import (
     build_git_range_summary,
     collect_git_candidates,
     is_git_worktree,
+    is_root_base_ref,
     net_diff_paths,
+    resolve_base_sha,
     resolve_git_ref,
 )
 
@@ -346,6 +348,66 @@ def test_range_summary_counts_merges(tmp_path: Path) -> None:
     assert summary["merge_commit_count"] == 1
     assert summary["merge_commits_skipped"] == 1
     assert summary["candidate_count"] == 3  # a, c, d (merge skipped)
+
+
+# --------------------------------------------------------------------------
+# Root base sentinel (:root / EMPTY / empty-tree SHA)
+# --------------------------------------------------------------------------
+
+
+def test_is_root_base_ref_recognizes_sentinels() -> None:
+    assert is_root_base_ref(":root")
+    assert is_root_base_ref("ROOT")
+    assert is_root_base_ref("EMPTY")
+    assert is_root_base_ref("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
+    assert not is_root_base_ref("v0.1.0")
+    assert not is_root_base_ref("HEAD")
+
+
+def test_collect_root_base_returns_all_commits(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    a = _commit(repo, "feat: add a", content_name="a.txt")
+    b = _commit(repo, "feat: add b", content_name="b.txt")
+    candidates = collect_git_candidates(repo, base_ref=":root", head_ref="HEAD")
+    shas = {c.sha for c in candidates}
+    assert shas == {a, b}
+    # The empty-tree SHA alias works the same way.
+    alias = collect_git_candidates(
+        repo,
+        base_ref="4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+        head_ref="HEAD",
+    )
+    assert {c.sha for c in alias} == {a, b}
+
+
+def test_resolve_base_sha_maps_root_to_empty_tree(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    _commit(repo, "feat: add a", content_name="a.txt")
+    assert resolve_base_sha(repo, ":root") == (
+        "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+    )
+    head_sha = resolve_git_ref(repo, "HEAD")
+    assert resolve_base_sha(repo, "HEAD") == head_sha
+
+
+def test_range_summary_root_base_range_string(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    _commit(repo, "feat: add a", content_name="a.txt")
+    _commit(repo, "feat: add b", content_name="b.txt")
+    summary = build_git_range_summary(repo, base_ref=":root", head_ref="HEAD")
+    head_sha = resolve_git_ref(repo, "HEAD")
+    assert summary["base_sha"] == "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+    assert summary["range"] == f":root..{head_sha}"
+    assert summary["commit_count"] == 2
+
+
+def test_collect_root_base_still_rejects_non_commit_tree(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    _commit(repo, "feat: add a", content_name="a.txt")
+    # A random tree object (not the empty tree) is not a commit and not a
+    # root sentinel; it must still be rejected as an unresolvable base.
+    with pytest.raises(LaunchError):
+        collect_git_candidates(repo, base_ref="HEAD^{tree}", head_ref="HEAD")
 
 
 # --------------------------------------------------------------------------

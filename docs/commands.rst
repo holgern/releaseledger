@@ -94,6 +94,10 @@ Entry commands
                                       [--format markdown|json]
                                       [--output PATH]
 
+``entry lint`` checks summary style and record validity. With ``--json`` it
+returns the full per-entry ``issues`` and ``entries`` payload, **including on
+failure**; the command still exits non-zero. ``--strict`` fails on warnings.
+
 Batch file format
 -----------------
 
@@ -143,9 +147,17 @@ Changelog commands
    releaseledger build [VERSION] [--all] [--target-file PATH]
                                [--include-release-status STATUS]...
                                [--preserve-unreleased|--no-preserve-unreleased]
+                               [--unreleased-version VERSION]
                                [--include-internal]
                                [--include-status STATUS]... [--strict]
                                [--dry-run] [--allow-empty]
+
+``build`` with no ``VERSION`` (or ``--all``) is a full rebuild. It omits an
+empty ``## [Unreleased]`` section: the heading and its link reference are
+rendered only when an unreleased body exists. ``--unreleased-version
+VERSION`` folds a ``planned``/``draft``/``candidate`` release into the
+canonical ``## [Unreleased]`` section without a version heading, and excludes
+that release from the normal release sections.
 
 Review commands
 ----------------
@@ -189,6 +201,11 @@ import`` generates an ``entry add-many`` YAML batch from the range for review
 and curation. It is an entry scaffold, not changelog prose: it warns you to
 run ``releaseledger audit init`` for a durable review worksheet. The ``next``
 forms are non-persisting previews that do not require a release record.
+
+For a real version, ``git range`` uses the release's stored git refs unless
+``--base`` or ``--head`` is supplied explicitly. ``--head`` therefore defaults
+to the stored release head (falling back to ``HEAD`` only when nothing is
+stored).
 
 Commit audit sheet commands
 ---------------------------
