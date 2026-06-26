@@ -72,6 +72,23 @@
   {
     "audience": null,
     "breaking": false,
+    "entry_id": "entry-0001",
+    "internal": false,
+    "kind": "docs",
+    "order": 1,
+    "record_revision": 2,
+    "release_version": "0.3.3",
+    "scopes": [],
+    "source_refs": [
+      "git:2ed85e3a088f1a87f6ba315ea57f764b4186f17f",
+      "git:c5699c258687b72fe7ae9b3cb2a70bc8dca70bfa"
+    ],
+    "status": "accepted",
+    "summary": "Documented migration from reStructuredText to MyST Markdown format"
+  },
+  {
+    "audience": null,
+    "breaking": false,
     "entry_id": "entry-0002",
     "internal": false,
     "kind": "added",
@@ -142,6 +159,20 @@
   {
     "audience": null,
     "breaking": false,
+    "entry_id": "entry-0002",
+    "internal": true,
+    "kind": "internal",
+    "order": 2,
+    "record_revision": 4,
+    "release_version": "0.3.3",
+    "scopes": [],
+    "source_refs": ["git:7c600e5bf0a4016a79c3032fbef997ffcc64b1d1"],
+    "status": "accepted",
+    "summary": "Fixed documentation formatting with pre-commit"
+  },
+  {
+    "audience": null,
+    "breaking": false,
     "entry_id": "entry-0003",
     "internal": false,
     "kind": "added",
@@ -208,6 +239,20 @@
     "source_refs": ["git:9f10c3d476e4bbc0326717d5c57613bdb86fa074"],
     "status": "accepted",
     "summary": "Added keepachangelog and extended changelog group modes"
+  },
+  {
+    "audience": null,
+    "breaking": false,
+    "entry_id": "entry-0003",
+    "internal": false,
+    "kind": "added",
+    "order": 3,
+    "record_revision": 1,
+    "release_version": "0.3.3",
+    "scopes": [],
+    "source_refs": ["git:e05e25e5c49d6efc118dd4bac7134d80e90dcb7d"],
+    "status": "accepted",
+    "summary": "Added strict git commit coverage checks and generated Unreleased section cleanup to changelog build"
   },
   {
     "audience": null,
