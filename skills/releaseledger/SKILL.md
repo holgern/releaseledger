@@ -73,7 +73,9 @@ releaseledger audit update VERSION --file PATH
 releaseledger audit validate VERSION [--strict] [--include-internal]
 releaseledger audit sync VERSION
 releaseledger branch status
-releaseledger build [VERSION] [--all] [--target-file CHANGELOG.md]
+releaseledger build --strict --target-file CHANGELOG.md
+releaseledger build VERSION --strict --target-file CHANGELOG.md
+releaseledger build VERSION --strict --target-file CHANGELOG.md --replace-existing
 
 releaseledger storage where
 releaseledger config show
@@ -290,6 +292,27 @@ Use this when the user asks to build, generate, or update `CHANGELOG.md`.
      and is a whole-file rewrite (no `--replace-existing`). `build VERSION`
      keeps the single-section insert/replace behavior.
 
+## Changelog build intent protocol
+
+When the user asks to "fill", "build", "rebuild", or "update" `CHANGELOG.md`
+without explicitly limiting the request to one version section, run the full
+document rebuild:
+
+```bash
+releaseledger build --strict --target-file CHANGELOG.md
+```
+
+Do not substitute `releaseledger build VERSION` unless the user explicitly asks
+for one release section.
+
+If a git range exists, strict build must pass. If it fails because commits are
+not covered by included entries, stop and create/update entries from a git audit
+worksheet. Do not write a partial changelog.
+
+If review only passes with `--include-internal`, tell the user that public
+`CHANGELOG.md` will omit internal-only entries. Use `--include-internal` only for
+internal release notes.
+
 ## Release review protocol
 
 Use this to answer "what did I already add for this release?" before adding
@@ -416,7 +439,13 @@ releaseledger entry add-many VERSION --file entries.yaml
 releaseledger review VERSION --git --git-base PREV_TAG --git-head HEAD --strict
 
 # 8. Build only after strict review passes.
-releaseledger build VERSION --release-date YYYY-MM-DD --strict --target-file CHANGELOG.md
+releaseledger build --strict --target-file CHANGELOG.md
+```
+
+For a single existing section correction, retain:
+
+```bash
+releaseledger build VERSION --strict --target-file CHANGELOG.md --replace-existing
 ```
 
 Commit-message guard before `entry add-many`:

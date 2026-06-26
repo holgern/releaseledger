@@ -12,6 +12,9 @@ the target file. Use `--dry-run` before writing and `--replace-existing` when
 re-rendering an existing release section. Pass `--template NAME` to select a
 named changelog template profile.
 
+`build` never invents entries from git commits. Git commit ranges require
+`git import` / audit / entry curation before a strict build can pass.
+
 ## Full changelog rebuild
 
 `releaseledger build` with no `VERSION` (or `releaseledger build --all`)
@@ -34,6 +37,10 @@ rebuilds the **complete** target file from ledger state:
   without a version heading, and excludes that release from the normal release
   sections. It is rejected for a missing, `canceled`, `yanked`, or already
   `released` version, and is valid only for full builds.
+- Generated folded Unreleased content is automatically removed once the folded
+  release is finalized.
+- Manual Unreleased content (without `<!-- releaseledger:unreleased-start`
+  markers) is always preserved by default.
 
 ## Group modes
 
@@ -108,8 +115,11 @@ postprocessors = [
 ## Strict builds
 
 `releaseledger build --strict` blocks on entry lint errors, empty included
-entries unless `--allow-empty` is supplied, and release source refs that are
-not covered by included entries.
+entries unless `--allow-empty` is supplied, release source refs that are
+not covered by included entries, and (for releases with stored git range
+metadata) git commits that have no accepted entry coverage. Internal-only
+entries satisfy audit coverage but are reported as excluded from the
+public changelog.
 
 ## Release review
 

@@ -41,6 +41,7 @@ from releaseledger.errors import (
     LaunchError,
 )
 from releaseledger.services.entry_lint import lint_release_entries
+from releaseledger.services.git_sources import collect_git_candidates
 from releaseledger.storage.config import (
     DEFAULT_CHANGELOG,
     KEEPACHANGELOG_PREAMBLE,
@@ -911,6 +912,235 @@ def _read_target(target: Path) -> str:
         ) from exc
 
 
+# ---------------------------------------------------------------------------
+# Full-build release-chain ordering
+# ---------------------------------------------------------------------------
+
+
+def _order_releases_for_changelog(
+    releases: list[ReleaseRecord],
+) -> tuple[list[ReleaseRecord], list[str]]:
+    """Order releases by explicit previous_version chain, newest-first.
+
+    Walks each chain from its head (a release not referenced as
+    previous_version by any other release) and collects connected releases.
+    Chain heads are ordered by date/semver fallback then walked back.
+    Remaining disconnected releases are appended with fallback ordering.
+    Returns the ordered list and any warnings.
+    """
+    by_version = {record.version: record for record in releases}
+    fallback = sorted(releases, key=_full_changelog_release_key, reverse=True)
+    if not fallback:
+        return [], []
+
+    # A release is a chain head if no other release points to it via previous_version.
+    referenced: set[str] = set()
+    for record in releases:
+        if record.previous_version:
+            referenced.add(record.previous_version)
+    heads = [r for r in fallback if r.version not in referenced]
+
+    ordered: list[ReleaseRecord] = []
+    seen: set[str] = set()
+    warnings: list[str] = []
+
+    for head in heads:
+        current: ReleaseRecord | None = head
+        chain_seen: set[str] = set()
+        while current is not None:
+            if current.version in chain_seen:
+                warnings.append(
+                    f"Release chain cycle detected at {current.version}; "
+                    "appending remaining releases with fallback ordering."
+                )
+                break
+            chain_seen.add(current.version)
+            if current.version not in seen:
+                ordered.append(current)
+                seen.add(current.version)
+
+            previous = current.previous_version
+            if not previous or previous not in by_version:
+                current = None
+            else:
+                current = by_version[previous]
+
+    remaining = [record for record in fallback if record.version not in seen]
+    if remaining:
+        warnings.append(
+            "Some releases are disconnected from the primary previous_version chain: "
+            + ", ".join(record.version for record in remaining)
+        )
+        ordered.extend(remaining)
+
+    return ordered, warnings
+
+
+# ---------------------------------------------------------------------------
+# Generated Unreleased block markers
+# ---------------------------------------------------------------------------
+
+_GENERATED_UNRELEASED_START_RE = re.compile(
+    r"^<!--\s*releaseledger:unreleased-start\s+version=(?P<version>[^>\s]+)\s*-->\s*$"
+)
+_GENERATED_UNRELEASED_END_RE = re.compile(
+    r"^<!--\s*releaseledger:unreleased-end\s*-->\s*$"
+)
+
+
+def _wrap_generated_unreleased_body(version: str, body: str) -> str:
+    body = body.strip("\n")
+    if not body:
+        return ""
+    return (
+        f"<!-- releaseledger:unreleased-start version={version} -->\n"
+        f"{body}\n"
+        "<!-- releaseledger:unreleased-end -->"
+    )
+
+
+def _strip_stale_generated_unreleased_body(
+    body: str,
+    *,
+    selected_versions: set[str],
+) -> tuple[str, str | None]:
+    """Remove generated Unreleased blocks for finalized releases.
+
+    Returns (cleaned_body, removed_version) where removed_version is None
+    when no stale block was found.
+    """
+    lines = body.splitlines()
+    start_idx: int | None = None
+    version: str | None = None
+
+    for index, line in enumerate(lines):
+        match = _GENERATED_UNRELEASED_START_RE.match(line.strip())
+        if match:
+            start_idx = index
+            version = match.group("version")
+            break
+
+    if start_idx is None or version is None:
+        return body, None
+
+    end_idx: int | None = None
+    for index in range(start_idx + 1, len(lines)):
+        if _GENERATED_UNRELEASED_END_RE.match(lines[index].strip()):
+            end_idx = index
+            break
+
+    if end_idx is None:
+        return body, None
+
+    if version not in selected_versions:
+        return body, None
+
+    remaining = lines[:start_idx] + lines[end_idx + 1 :]
+    return "\n".join(remaining).strip("\n"), version
+
+
+# ---------------------------------------------------------------------------
+# Duplicate bullet detection between Unreleased and releases
+# ---------------------------------------------------------------------------
+
+_BULLET_RE = re.compile(r"^\s*[-*]\s+(?P<body>.+?)\s*$")
+
+
+def _normalized_changelog_bullets(text: str) -> set[str]:
+    bullets: set[str] = set()
+    for line in text.splitlines():
+        match = _BULLET_RE.match(line)
+        if not match:
+            continue
+        value = re.sub(r"\s+", " ", match.group("body").strip()).lower()
+        if value:
+            bullets.add(value)
+    return bullets
+
+
+def _duplicate_unreleased_release_bullets(
+    unreleased_body: str,
+    sections: list[str],
+) -> set[str]:
+    unreleased = _normalized_changelog_bullets(unreleased_body)
+    released = _normalized_changelog_bullets("\n".join(sections))
+    return unreleased & released
+
+
+# ---------------------------------------------------------------------------
+# Strict git-range coverage enforcement
+# ---------------------------------------------------------------------------
+
+
+def _strict_git_range_coverage(
+    workspace_root: Path,
+    *,
+    release: ReleaseRecord,
+    entries: list[ReleaseEntryRecord],
+    all_entries: list[ReleaseEntryRecord],
+    include_internal: bool,
+    allow_empty: bool,
+    statuses: tuple[str, ...],
+) -> tuple[list[str], int]:
+    """Enforce git-range commit coverage in strict builds.
+
+    Returns (warnings, hidden_internal_commit_count). Raises LaunchError when
+    a commit in the stored git range has no accepted entry coverage and
+    allow_empty is False.
+    """
+    base_ref = release.git_base_ref or release.git_base_sha
+    head_ref = release.git_head_ref or release.git_head_sha
+    if not base_ref or not head_ref:
+        return [], 0
+
+    candidates = collect_git_candidates(
+        workspace_root,
+        base_ref=base_ref,
+        head_ref=head_ref,
+    )
+    expected = {
+        candidate.source_ref for candidate in candidates if candidate.include_by_default
+    }
+    if not expected:
+        return [], 0
+
+    accepted_refs = {
+        ref
+        for entry in all_entries
+        if entry.status in statuses
+        for ref in entry.source_refs
+    }
+    visible_refs = {ref for entry in entries for ref in entry.source_refs}
+
+    missing = sorted(expected - accepted_refs)
+    if missing and not allow_empty:
+        raise LaunchError(
+            f"Strict build for {release.version} has git commits not covered "
+            "by accepted entries: " + ", ".join(missing),
+            code=CODE_VALIDATION_ERROR,
+            exit_code=2,
+            remediation=[
+                "Run `releaseledger git import VERSION "
+                "--base BASE --head HEAD --output entries.yaml`.",
+                "Rewrite the generated entry summaries from patch evidence.",
+                "Run `releaseledger entry add-many VERSION "
+                "--file entries.yaml --dry-run`.",
+                "Run `releaseledger review VERSION --git --strict` before building.",
+            ],
+        )
+
+    hidden_internal_refs = (
+        sorted(expected - visible_refs) if not include_internal else []
+    )
+    warnings: list[str] = []
+    if hidden_internal_refs:
+        warnings.append(
+            f"{release.version}: {len(hidden_internal_refs)} git commit(s) are covered "
+            "only by entries excluded from this build."
+        )
+    return warnings, len(hidden_internal_refs)
+
+
 def build_changelog_file(
     workspace_root: Path,
     *,
@@ -948,6 +1178,7 @@ def build_changelog_file(
         if entry.status in statuses and (include_internal or not entry.internal)
     ]
     strict_warnings: list[str] = []
+    hidden_internal_commit_count = 0
     if strict:
         lint = lint_release_entries(
             workspace_root,
@@ -986,6 +1217,16 @@ def build_changelog_file(
             strict_warnings.append(
                 f"Entry lint reported {summary['warnings']} warning(s)."
             )
+        git_warnings, hidden_internal_commit_count = _strict_git_range_coverage(
+            workspace_root,
+            release=release,
+            entries=selected,
+            all_entries=all_entries,
+            include_internal=include_internal,
+            allow_empty=allow_empty,
+            statuses=statuses,
+        )
+        strict_warnings.extend(git_warnings)
 
     # In Keep a Changelog mode with strict, require a date for released sections
     is_kac = config.changelog_standard == "keepachangelog-1.1.0"
@@ -1020,6 +1261,22 @@ def build_changelog_file(
     warnings.extend(strict_warnings)
     replaced_existing = False
 
+    excluded_internal_count = sum(
+        1
+        for entry in all_entries
+        if entry.status in statuses and entry.internal and not include_internal
+    )
+    excluded_draft_count = sum(
+        1
+        for entry in all_entries
+        if entry.status == "draft" and "draft" not in statuses
+    )
+    excluded_rejected_count = sum(
+        1
+        for entry in all_entries
+        if entry.status == "rejected" and "rejected" not in statuses
+    )
+
     if dry_run:
         return {
             "kind": "changelog_build",
@@ -1035,6 +1292,10 @@ def build_changelog_file(
             "included_statuses": list(statuses),
             "status_counts": rendered["status_counts"],
             "warnings": warnings,
+            "excluded_internal_count": excluded_internal_count,
+            "excluded_draft_count": excluded_draft_count,
+            "excluded_rejected_count": excluded_rejected_count,
+            "hidden_internal_git_commit_count": hidden_internal_commit_count,
         }
 
     if span is not None:
@@ -1099,6 +1360,10 @@ def build_changelog_file(
         "included_statuses": list(statuses),
         "status_counts": rendered["status_counts"],
         "warnings": warnings,
+        "excluded_internal_count": excluded_internal_count,
+        "excluded_draft_count": excluded_draft_count,
+        "excluded_rejected_count": excluded_rejected_count,
+        "hidden_internal_git_commit_count": hidden_internal_commit_count,
     }
 
 
@@ -1336,7 +1601,7 @@ def _validate_folded_unreleased_strict(
         )
 
 
-def build_full_changelog_file(
+def build_full_changelog_file(  # noqa: C901
     workspace_root: Path,
     *,
     target_file: Path | None = None,
@@ -1382,11 +1647,14 @@ def build_full_changelog_file(
         for record in all_releases
         if record.status in release_statuses and record.status != "canceled"
     ]
-    selected.sort(key=_full_changelog_release_key, reverse=True)
 
     sections: list[str] = []
     results: list[dict[str, object]] = []
     warnings: list[str] = []
+
+    selected, order_warnings = _order_releases_for_changelog(selected)
+    warnings.extend(order_warnings)
+
     unreleased_version_rendered: str | None = None
     unreleased_entry_count = 0
     if unreleased_version:
@@ -1416,17 +1684,35 @@ def build_full_changelog_file(
         )
         folded_body = str(rendered_unreleased["body"])
         if folded_body.strip():
-            unreleased_body = folded_body
+            unreleased_body = _wrap_generated_unreleased_body(
+                unreleased_version, folded_body
+            )
             unreleased_version_rendered = unreleased_version
             unreleased_entry_count = int(rendered_unreleased["entry_count"])
         # Exclude the folded release from normal release sections.
         selected = [r for r in selected if r.version != unreleased_version]
 
+    # Strip stale generated Unreleased blocks for finalized releases.
+    selected_versions = {record.version for record in selected}
+    if preserve_unreleased and unreleased_body:
+        unreleased_body, removed_unreleased_version = (
+            _strip_stale_generated_unreleased_body(
+                unreleased_body,
+                selected_versions=selected_versions,
+            )
+        )
+        if removed_unreleased_version:
+            warnings.append(
+                f"Removed generated Unreleased body for finalized release "
+                f"{removed_unreleased_version}."
+            )
+
     for release in selected:
         version = release.version
+        all_version_entries = load_entries(workspace_root, version)
         version_entries = [
             entry
-            for entry in load_entries(workspace_root, version)
+            for entry in all_version_entries
             if entry.status in statuses and (include_internal or not entry.internal)
         ]
         if strict:
@@ -1475,6 +1761,16 @@ def build_full_changelog_file(
                     f"{version}: entry lint reported "
                     f"{lint_summary['warnings']} warning(s)."
                 )
+            git_warnings, _ = _strict_git_range_coverage(
+                workspace_root,
+                release=release,
+                entries=version_entries,
+                all_entries=all_version_entries,
+                include_internal=include_internal,
+                allow_empty=allow_empty,
+                statuses=statuses,
+            )
+            warnings.extend(git_warnings)
         rendered = render_changelog_section(
             workspace_root,
             version=version,
@@ -1497,6 +1793,25 @@ def build_full_changelog_file(
             }
         )
 
+    duplicates = _duplicate_unreleased_release_bullets(unreleased_body, sections)
+    if duplicates:
+        msg = (
+            "Unreleased contains entries that also appear in released sections: "
+            + "; ".join(sorted(duplicates))
+        )
+        if strict:
+            raise LaunchError(
+                msg,
+                code=CODE_VALIDATION_ERROR,
+                exit_code=2,
+                remediation=[
+                    "Run with --no-preserve-unreleased if the "
+                    "Unreleased body is stale.",
+                    "Or edit the manual Unreleased notes before rebuilding.",
+                ],
+            )
+        warnings.append(msg)
+
     link_refs = _render_full_link_refs(
         config, selected, include_unreleased=bool(unreleased_body.strip())
     )
@@ -1507,6 +1822,51 @@ def build_full_changelog_file(
         link_refs=link_refs,
     )
     document = _ensure_final_newline(document)
+
+    total_excluded_internal = 0
+    total_excluded_draft = 0
+    total_excluded_rejected = 0
+    total_hidden_internal_commits = 0
+    for release in selected:
+        all_rel_entries = load_entries(workspace_root, release.version)
+        total_excluded_internal += sum(
+            1
+            for entry in all_rel_entries
+            if entry.status in statuses and entry.internal and not include_internal
+        )
+        total_excluded_draft += sum(
+            1
+            for entry in all_rel_entries
+            if entry.status == "draft" and "draft" not in statuses
+        )
+        total_excluded_rejected += sum(
+            1
+            for entry in all_rel_entries
+            if entry.status == "rejected" and "rejected" not in statuses
+        )
+        if strict:
+            base_ref = release.git_base_ref or release.git_base_sha
+            head_ref = release.git_head_ref or release.git_head_sha
+            if base_ref and head_ref:
+                candidates = collect_git_candidates(
+                    workspace_root,
+                    base_ref=base_ref,
+                    head_ref=head_ref,
+                )
+                expected = {
+                    candidate.source_ref
+                    for candidate in candidates
+                    if candidate.include_by_default
+                }
+                visible_refs = {
+                    ref
+                    for entry in load_entries(workspace_root, release.version)
+                    if entry.status in statuses
+                    and (include_internal or not entry.internal)
+                    for ref in entry.source_refs
+                }
+                hidden = sorted(expected - visible_refs) if not include_internal else []
+                total_hidden_internal_commits += len(hidden)
 
     versions = [str(item["version"]) for item in results]
     payload: dict[str, object] = {
@@ -1526,6 +1886,10 @@ def build_full_changelog_file(
         "unreleased_version": unreleased_version_rendered,
         "unreleased_entry_count": unreleased_entry_count,
         "unreleased_rendered": unreleased_version_rendered is not None,
+        "excluded_internal_count": total_excluded_internal,
+        "excluded_draft_count": total_excluded_draft,
+        "excluded_rejected_count": total_excluded_rejected,
+        "hidden_internal_git_commit_count": total_hidden_internal_commits,
     }
 
     if dry_run:

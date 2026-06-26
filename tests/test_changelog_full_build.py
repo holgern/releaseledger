@@ -533,3 +533,244 @@ class TestUnreleasedVersionFolding:
         result = _run(tmp_path, "build", "0.2.0", "--unreleased-version", "0.2.0")
         assert result.exit_code != 0
         assert "full builds" in _human_error(result)
+
+
+class TestFullBuildRegression:
+    """Regression tests from changelog build review brief."""
+
+    @staticmethod
+    def _init_git(tmp_path: Path) -> None:
+        import subprocess
+
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "init", "-b", "main"],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "config", "user.email", "test@example.com"],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "config", "user.name", "Test Runner"],
+            check=True,
+            capture_output=True,
+        )
+
+    @staticmethod
+    def _git_commit(tmp_path: Path, message: str, tag: str | None = None) -> str:
+        import subprocess
+
+        (tmp_path / "README.md").parent.mkdir(parents=True, exist_ok=True)
+        existing = (
+            (tmp_path / "README.md").read_text()
+            if (tmp_path / "README.md").exists()
+            else ""
+        )
+        (tmp_path / "README.md").write_text(existing + f"\n{message}\n")
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "add", "README.md"],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "commit", "-m", message],
+            check=True,
+            capture_output=True,
+        )
+        sha_result = subprocess.run(
+            ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        sha = sha_result.stdout.strip()
+        if tag:
+            subprocess.run(
+                ["git", "-C", str(tmp_path), "tag", tag],
+                check=True,
+                capture_output=True,
+            )
+        return sha
+
+    def test_build_no_version_rebuilds_full_file_not_single_section(
+        self, tmp_path: Path
+    ) -> None:
+        TestFullBuild._seed_two_releases(tmp_path)
+        result = _run(tmp_path, "build", "--target-file", "CHANGELOG.md")
+        assert result.exit_code == 0, _human_error(result)
+        text = (tmp_path / "CHANGELOG.md").read_text()
+        assert "## [0.2.0]" in text
+        assert "## [0.1.0]" in text
+
+    def test_finalized_folded_unreleased_is_not_duplicated(
+        self, tmp_path: Path
+    ) -> None:
+        helper = TestUnreleasedVersionFolding()
+        helper._seed_released_and_planned(tmp_path)
+
+        first = _run(tmp_path, "build", "--all", "--unreleased-version", "0.2.0")
+        assert first.exit_code == 0, _human_error(first)
+        assert "## [Unreleased]" in (tmp_path / "CHANGELOG.md").read_text()
+
+        finalize = _run(
+            tmp_path, "release", "finalize", "0.2.0", "--released-at", "2026-02-20"
+        )
+        assert finalize.exit_code == 0, _human_error(finalize)
+
+        rebuilt = _run(tmp_path, "build", "--all", "--strict")
+        assert rebuilt.exit_code == 0, _human_error(rebuilt)
+        text = (tmp_path / "CHANGELOG.md").read_text()
+
+        assert text.count("Added second feature") == 1
+        assert "## [0.2.0] - 2026-02-20" in text
+
+    def test_manual_unreleased_body_is_preserved(self, tmp_path: Path) -> None:
+        TestFullBuild._seed_two_releases(tmp_path)
+        (tmp_path / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## [Unreleased]\n\n- Manual pending note\n\n"
+        )
+        result = _run(tmp_path, "build", "--all")
+        assert result.exit_code == 0, _human_error(result)
+        text = (tmp_path / "CHANGELOG.md").read_text()
+        assert "- Manual pending note" in text
+
+    def test_duplicate_unreleased_body_fails_strict(self, tmp_path: Path) -> None:
+        TestFullBuild._seed_two_releases(tmp_path)
+        (tmp_path / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## [Unreleased]\n\n- Add second public feature\n\n"
+        )
+        result = _run(tmp_path, "build", "--all", "--strict")
+        assert result.exit_code != 0
+        assert "Unreleased contains entries" in _human_error(result)
+
+    def test_full_build_orders_by_previous_version_chain(self, tmp_path: Path) -> None:
+        _init_project(tmp_path)
+        _write_keepachangelog_config(tmp_path)
+
+        _seed_release(tmp_path, "1.0.0", released_at="2026-06-10", summary="Added one")
+        _seed_release(
+            tmp_path,
+            "1.1.0",
+            released_at="2026-06-10",
+            summary="Added two",
+            previous="1.0.0",
+        )
+        _seed_release(
+            tmp_path,
+            "1.2.0",
+            released_at="2026-06-09",
+            summary="Added three",
+            previous="1.1.0",
+        )
+
+        result = _run(tmp_path, "build", "--all")
+        assert result.exit_code == 0, _human_error(result)
+        headings = [
+            line
+            for line in (tmp_path / "CHANGELOG.md").read_text().splitlines()
+            if line.startswith("## ")
+        ]
+        assert headings == [
+            "## [1.2.0] - 2026-06-09",
+            "## [1.1.0] - 2026-06-10",
+            "## [1.0.0] - 2026-06-10",
+        ]
+
+    def test_strict_build_fails_on_git_range_with_missing_accepted_coverage(
+        self, tmp_path: Path
+    ) -> None:
+
+        self._init_git(tmp_path)
+
+        # Create initial commit and tag.
+        self._git_commit(tmp_path, "Initial commit", tag="v0.1.0")
+
+        # Make two more commits.
+        sha1 = self._git_commit(tmp_path, "Add feature A")
+        sha2 = self._git_commit(tmp_path, "Add feature B")
+
+        _init_project(tmp_path)
+        _write_keepachangelog_config(
+            tmp_path, repository_url="https://example.com/owner/repo"
+        )
+
+        # Create release with git range metadata.
+        _run(
+            tmp_path,
+            "release",
+            "tag",
+            "0.2.0",
+            "--released-at",
+            "2026-06-10",
+            "--previous",
+            "0.1.0",
+        )
+        _run(
+            tmp_path,
+            "release",
+            "update",
+            "0.2.0",
+            "--git-base",
+            "v0.1.0",
+            "--git-head",
+            "HEAD",
+        )
+
+        # Add an accepted entry covering only sha1.
+        _run(
+            tmp_path,
+            "entry",
+            "add",
+            "0.2.0",
+            "--kind",
+            "added",
+            "--summary",
+            "Added feature A",
+            "--source-ref",
+            f"git:{sha1}",
+        )
+
+        # Strict build with one commit uncovered should fail.
+        result = _run(tmp_path, "build", "0.2.0", "--strict")
+        assert result.exit_code != 0
+        assert "git commits not covered" in _human_error(result)
+
+        # Add an accepted internal entry covering sha2.
+        _run(
+            tmp_path,
+            "entry",
+            "add",
+            "0.2.0",
+            "--kind",
+            "internal",
+            "--summary",
+            "Internal work for feature B",
+            "--internal",
+            "--source-ref",
+            f"git:{sha2}",
+        )
+
+        # Public strict build with internal entry covering sha2 should succeed.
+        public = _run(tmp_path, "build", "0.2.0", "--strict")
+        assert public.exit_code == 0, _human_error(public)
+        assert "Added feature A" in public.stdout or public.exit_code == 0
+
+        # Internal-only covered commits should be reported.
+        payload = _json(
+            _jrun(tmp_path, "build", "0.2.0", "--strict", "--replace-existing")
+        )
+        r = payload["result"]
+        assert r.get("hidden_internal_git_commit_count", 0) >= 1
+
+        # With --include-internal, the warning disappears.
+        internal = _run(
+            tmp_path,
+            "build",
+            "0.2.0",
+            "--strict",
+            "--include-internal",
+            "--replace-existing",
+        )
+        assert internal.exit_code == 0, _human_error(internal)

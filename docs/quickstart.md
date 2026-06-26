@@ -65,10 +65,16 @@ releaseledger entry add-many 1.2.0 --file /tmp/1.2.0-entries.yaml
 
 ```bash
 releaseledger review 1.2.0 --git --strict
+releaseledger build --strict --target-file CHANGELOG.md
+```
+
+For a single release section update only:
+
+```bash
 releaseledger build 1.2.0 \
-  --release-date 2026-06-14 \
   --strict \
-  --target-file CHANGELOG.md
+  --target-file CHANGELOG.md \
+  --replace-existing
 ```
 
 ## Optional: taskledger provenance

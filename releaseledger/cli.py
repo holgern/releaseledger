@@ -1661,12 +1661,25 @@ def build_command(
         else:
             release_count = _as_int(result.get("release_count", 0))
             human = f"wrote {target} ({release_count} release sections)"
+        # Surface exclusion summaries.
+        excluded_internal = _as_int(result.get("excluded_internal_count", 0))
+        hidden_commits = _as_int(result.get("hidden_internal_git_commit_count", 0))
+        if excluded_internal:
+            human += f"\nExcluded internal entries: {excluded_internal}"
+        if hidden_commits:
+            human += f"\nInternal-only covered commits: {hidden_commits}"
         result_type = "changelog_full_build"
     else:
         if dry_run:
             human = str(result.get("section", ""))
         else:
             human = f"wrote {target}"
+        excluded_internal = _as_int(result.get("excluded_internal_count", 0))
+        hidden_commits = _as_int(result.get("hidden_internal_git_commit_count", 0))
+        if excluded_internal:
+            human += f"\nExcluded internal entries: {excluded_internal}"
+        if hidden_commits:
+            human += f"\nInternal-only covered commits: {hidden_commits}"
         result_type = "changelog_build"
     emit_payload(
         command="build",

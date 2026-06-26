@@ -145,11 +145,18 @@ releaseledger build [VERSION] [--all] [--target-file PATH]
                             [--dry-run] [--allow-empty]
 ```
 
-`build` with no `VERSION` (or `--all`) is a full rebuild. It omits an
-empty `## [Unreleased]` section: the heading and its link reference are
-rendered only when an unreleased body exists. `--unreleased-version VERSION` folds a `planned`/`draft`/`candidate` release into the
-canonical `## [Unreleased]` section without a version heading, and excludes
-that release from the normal release sections.
+`build` with no `VERSION` (or `--all`) is a full rebuild. `build VERSION`
+updates one section. Full build omits an empty `## [Unreleased]` section: the
+heading and its link reference are rendered only when an unreleased body exists.
+`--unreleased-version VERSION` folds a `planned`/`draft`/`candidate` release
+into the canonical `## [Unreleased]` section without a version heading, and
+excludes that release from the normal release sections.
+
+`build` never invents entries from git commits; entries must be created first
+(via `git import`, audit, and `entry add-many`). Git ranges require coverage
+before a strict build can pass. Manual Unreleased content is preserved by
+default; generated folded Unreleased content is automatically removed once the
+folded release is finalized.
 
 ## Review commands
 
